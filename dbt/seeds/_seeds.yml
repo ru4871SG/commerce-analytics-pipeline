@@ -1,0 +1,79 @@
+seeds:
+  - name: brands
+    description: >
+      The brand registry. One row per brand: the Airflow DAG reads this file to decide which
+      brands to extract (load_from_source), from which CRM database, and the reporting currency.
+      The models read it for brand rules such as whether prices include VAT. To add a brand, add
+      a row here. A brand with load_from_source = false is not extracted: its rows are expected
+      to be in RAW.CRM already.
+    config:
+      column_types:
+        brand: varchar
+        brand_name: varchar
+        source_database: varchar
+        load_from_source: boolean
+        currency_code: varchar
+        prices_include_vat: boolean
+        vat_rate: number(5, 4)
+    columns:
+      - name: brand
+        description: Brand key, lowercase. Matches RAW.CRM.*._BRAND and the dbt models.
+        data_tests:
+          - unique
+          - not_null
+      - name: brand_name
+        description: Name shown in dashboards and the brand filter.
+        data_tests:
+          - unique
+          - not_null
+      - name: currency_code
+        description: ISO currency of the brand's orders and refunds.
+        data_tests:
+          - not_null
+          - relationships:      # every brand currency needs a reporting rate
+              arguments:
+                to: ref('fx_rates')
+                field: currency_code
+      - name: prices_include_vat
+        description: True when order totals and refunds include VAT, which is removed before revenue is reported.
+        data_tests:
+          - not_null
+
+  - name: fx_rates
+    description: >
+      Constant-currency (budget) rates: one fixed USD rate per currency. The executive report
+      shows every brand in USD at these rates, so brands in different currencies add up and
+      growth is not distorted by exchange-rate moves. Illustrative values for the demo; in
+      production finance would own this table.
+    config:
+      column_types:
+        currency_code: varchar
+        usd_rate: number(10, 4)
+    columns:
+      - name: currency_code
+        data_tests:
+          - unique
+          - not_null
+      - name: usd_rate
+        description: US dollars per one unit of the currency.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: false
+
+  - name: product_name_corrections
+    description: Product names to merge in first-order reporting (typos and offer names that are the same product).
+    config:
+      column_types:
+        raw_product_name: varchar
+        product_name: varchar
+    columns:
+      - name: raw_product_name
+        data_tests:
+          - unique
+          - not_null
+      - name: product_name
+        data_tests:
+          - not_null

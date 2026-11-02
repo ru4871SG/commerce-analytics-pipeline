@@ -1,0 +1,388 @@
+models:
+  - name: dim_brands
+    description: One row per brand. The dashboard's brand filter reads brand_name from here.
+    columns:
+      - name: brand_key
+        data_tests: [unique, not_null]
+      - name: brand
+        data_tests: [unique, not_null]
+      - name: usd_rate
+        description: Constant-currency USD rate of the brand's currency (seeds/fx_rates.csv).
+        data_tests: [not_null]
+
+  - name: dim_dates
+    description: One row per calendar day, from the first order date to the as-of date.
+    columns:
+      - name: date_day
+        data_tests: [unique, not_null]
+
+  - name: dim_customers
+    description: >
+      One row per brand and customer, including customers who never ordered. first_order_* is
+      the earliest qualifying order (paid, fulfilled or new, positive total); NULL when the
+      customer has none. Test accounts are excluded.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, customer_id]
+    columns:
+      - name: customer_key
+        data_tests: [unique, not_null]
+      - name: brand_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_brands')
+                field: brand_key
+      - name: first_purchase_type
+        description: Purchase type of the first item. NULL when the customer never ordered.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['Subscribe', 'Upsell', 'One-Time Purchase']
+
+  - name: dim_products
+    description: One row per brand and product variant, with the product's fulfilment costs.
+    columns:
+      - name: product_variant_key
+        data_tests: [unique, not_null]
+      - name: brand_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_brands')
+                field: brand_key
+
+  - name: fct_orders
+    description: >
+      One row per non-cart order from a customer who is not a test account. Replaces the
+      enriched order table the pandas ETL wrote back into each CRM database.
+    columns:
+      - name: order_key
+        data_tests: [unique, not_null]
+      - name: brand_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_brands')
+                field: brand_key
+      - name: customer_key
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_key
+      - name: order_date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_dates')
+                field: date_day
+      - name: renewal_of_order_key
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('fct_orders')
+                field: order_key
+      - name: gross_sales
+        description: Order total without VAT (where prices include it), in currency units. Before refunds and the cost of the order.
+        data_tests: [not_null]
+      - name: margin_before_refunds
+        description: Gross sales minus the cost of the order (goods, shipping, processing, payment fees), in currency units.
+        data_tests: [not_null]
+      - name: contribution_margin
+        description: Margin before refunds minus this order's completed refunds without VAT, whenever they were issued. Before ad spend.
+        data_tests: [not_null]
+      - name: gross_sales_usd
+        description: gross_sales in USD at the brand's constant-currency rate. Adds up across brands.
+        data_tests: [not_null]
+      - name: margin_before_refunds_usd
+        description: margin_before_refunds in USD at the brand's constant-currency rate. Adds up across brands.
+        data_tests: [not_null]
+      - name: contribution_margin_usd
+        description: contribution_margin in USD at the brand's constant-currency rate. Adds up across brands.
+        data_tests: [not_null]
+      - name: is_paid_subscription
+        description: A subscription order that was paid. The subscriptions the report counts; one never paid never started.
+      - name: is_qualifying_order
+        description: Paid, fulfilled or new, positive total. The orders that make someone a customer.
+      - name: cost_of_order_cents
+        data_tests: [not_null]
+      - name: is_revenue_order
+        data_tests: [not_null]
+      - name: acquisition_type
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['Email', 'Ads', 'Subscription', 'Calls', 'Site']
+      - name: attributed_utm_source
+        description: utm_source after the last-click rules (renewal, agent order, email click, rebuy).
+      - name: customer_first_order_date
+        description: New York day of the customer's first qualifying order (dim_customers). NULL when they have none.
+      - name: cohort_number
+        description: 30-day period since the customer's first qualifying order (0 = days 0-29). Negative for an order before it, NULL when they have none.
+
+  - name: fct_order_items
+    description: One row per order line of a non-cart order, with the line's cost.
+    columns:
+      - name: order_item_key
+        data_tests: [unique, not_null]
+      - name: order_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_orders')
+                field: order_key
+      - name: product_variant_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_products')
+                field: product_variant_key
+      - name: brand_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_brands')
+                field: brand_key
+      - name: order_date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_dates')
+                field: date_day
+      - name: item_cost_cents
+        data_tests: [not_null]
+
+  - name: fct_refunds
+    description: One row per refund payment, linked to its order by brand and order number.
+    columns:
+      - name: refund_key
+        data_tests: [unique, not_null]
+      - name: refund_amount_usd
+        description: The refund without VAT, in USD at the brand's constant-currency rate. Adds up across brands.
+        data_tests: [not_null]
+      - name: reduces_revenue
+        description: A completed refund of a revenue order. These come off revenue and contribution margin on issued_date.
+        data_tests: [not_null]
+      - name: order_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_orders')
+                field: order_key
+      - name: customer_key
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_key
+      - name: brand_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_brands')
+                field: brand_key
+      - name: issued_date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_dates')
+                field: date_day
+
+  - name: fct_customer_monthly_activity
+    description: >
+      Periodic snapshot: one row per customer per month since their first order, with whether
+      they ordered that month. Replaces the unique_orders_<brand> tables.
+    columns:
+      - name: customer_month_key
+        data_tests: [unique, not_null]
+      - name: customer_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_key
+      - name: brand_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_brands')
+                field: brand_key
+
+  - name: fct_rebuy_by_first_product
+    description: >
+      Customers who ordered again within N days of their first order, by brand, first product
+      and purchase type. Replaces the daily_rebuy_percentage tables.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, first_product_name, first_purchase_type, day_offset]
+    columns:
+      - name: rebuy_rate
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+
+  - name: fct_marketing_spend
+    description: >
+      One row per brand, day, channel, medium and campaign of ad spend, in the brand's currency and
+      in USD at the constant-currency rate.
+    columns:
+      - name: marketing_spend_key
+        data_tests: [unique, not_null]
+      - name: brand_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_brands')
+                field: brand_key
+      - name: spend_date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_dates')
+                field: date_day
+      - name: spend_usd
+        data_tests: [not_null]
+
+  - name: fct_daily_orders_live
+    description: >
+      Orders per brand and New York day from RAW.CRM.ORDERS: counts and the paid total in cents of
+      the brand's currency. A Snowflake dynamic table with a 15-minute target lag, reading bronze
+      only so it refreshes incrementally; a normal table on the local emulator. Read by
+      exec_daily_orders_live, which adds the brand name and converts sales to USD.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, date_day]
+    columns:
+      - name: paid_total_cents
+        data_tests: [not_null]
+
+  - name: fct_order_state_history
+    description: >
+      SCD type 2 of the order state: one row per order and state it has been in, valid from
+      valid_from until valid_to (NULL while current). Built from the change log RAW.CRM.ORDERS_CHANGES.
+    data_tests:
+      # The states of an order follow one another with no gap and no overlap
+      - dbt_utils.mutually_exclusive_ranges:
+          arguments:
+            lower_bound_column: valid_from
+            upper_bound_column: coalesce(valid_to, '9999-12-31'::timestamp_ntz)
+            partition_by: order_key
+            gaps: not_allowed
+      # Exactly one current state per order
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [order_key]
+          config:
+            where: is_current
+    columns:
+      - name: order_state_key
+        data_tests: [unique, not_null]
+      - name: order_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_orders')
+                field: order_key
+      - name: valid_from
+        data_tests: [not_null]
+
+unit_tests:
+  - name: cost_of_order_charges_fixed_costs_on_the_first_item_only
+    description: >
+      The first item carries COGS, shipping, first-item processing and the first-unit cost; every
+      further unit costs additional processing plus the additional-unit cost. Carts get no cost.
+    model: int_order_item_costs
+    given:
+      - input: ref('stg_crm__orders')
+        rows:
+          - {brand: broomx, order_id: 1, state: new, total_cents: 5000, items_total_cents: 4500}
+          - {brand: broomx, order_id: 2, state: cart, total_cents: 1000, items_total_cents: 1000}
+      - input: ref('stg_crm__order_items')
+        rows:
+          - {brand: broomx, order_item_id: 11, order_id: 1, variant_id: 7, quantity: 2, item_total_cents: 3000}
+          - {brand: broomx, order_item_id: 12, order_id: 1, variant_id: 7, quantity: 1, item_total_cents: 1500}
+          - {brand: broomx, order_item_id: 21, order_id: 2, variant_id: 7, quantity: 1, item_total_cents: 1000}
+      - input: ref('stg_crm__product_variants')
+        rows:
+          - {brand: broomx, variant_id: 7, product_id: 3}
+      - input: ref('stg_crm__products')
+        rows:
+          - {brand: broomx, product_id: 3, product_cost_sku: SKU-1}
+      - input: ref('stg_crm__product_costs')
+        rows:
+          - {brand: broomx, sku: SKU-1, shipping_cost_cents: 300, first_unit_cost_cents: 800, additional_unit_cost_cents: 400}
+      - input: ref('stg_crm__processing_costs')
+        rows:
+          - {brand: broomx, first_item_processing_cents: 100, additional_item_processing_cents: 50}
+    expect:
+      # Item 11: value 3000 + 5000 - 4500 = 3500, COGS trunc(350 + (69 + 131.5) / 2) = 450,
+      #          + 300 shipping + 100 processing + 800 first unit + 1 x (50 + 400)  = 2100
+      # Item 12: 1 x (50 + 400)                                                      =  450
+      rows:
+        - {brand: broomx, order_item_id: 11, item_position: 1, item_cost_cents: 2100}
+        - {brand: broomx, order_item_id: 12, item_position: 2, item_cost_cents: 450}
+
+  - name: contribution_margin_subtracts_refunds_and_cohorts_are_30_days_from_the_first_paid_order
+    model: fct_orders
+    overrides:
+      vars:
+        excluded_customer_ids: [1]
+    given:
+      - input: ref('stg_crm__orders')
+        rows:
+          - {brand: broomx, order_id: 100, order_number: "A-100", customer_id: 10, created_from_order_id: null, state: fulfilled, payment_state: paid, is_paid: true, shipping_state: shipped, total_cents: 5000, items_total_cents: 4500, adjustments_total_cents: 500, currency_code: USD, created_at: "2026-01-01 10:00:00", order_date: "2026-01-01", is_subscription: false, is_subscription_canceled: false, subscription_canceled_at: null, cancel_date: null, is_subscription_paused: false, is_created_by_admin: false, is_sales_funnel: false, acquisition_domain: null, utm_source: null, utm_medium: null, utm_campaign: null, utm_content: null, utm_term: null, utm_id: null}
+          - {brand: broomx, order_id: 101, order_number: "A-101", customer_id: 10, created_from_order_id: null, state: fulfilled, payment_state: refunded, is_paid: true, shipping_state: shipped, total_cents: 3000, items_total_cents: 3000, adjustments_total_cents: 0, currency_code: USD, created_at: "2026-02-05 10:00:00", order_date: "2026-02-05", is_subscription: false, is_subscription_canceled: false, subscription_canceled_at: null, cancel_date: null, is_subscription_paused: false, is_created_by_admin: false, is_sales_funnel: false, acquisition_domain: null, utm_source: null, utm_medium: null, utm_campaign: null, utm_content: null, utm_term: null, utm_id: null}
+          - {brand: broomx, order_id: 102, order_number: "A-102", customer_id: 10, created_from_order_id: null, state: cancelled, payment_state: cancelled, is_paid: false, shipping_state: cancelled, total_cents: 9900, items_total_cents: 9900, adjustments_total_cents: 0, currency_code: USD, created_at: "2026-02-06 10:00:00", order_date: "2026-02-06", is_subscription: false, is_subscription_canceled: false, subscription_canceled_at: null, cancel_date: null, is_subscription_paused: false, is_created_by_admin: false, is_sales_funnel: false, acquisition_domain: null, utm_source: null, utm_medium: null, utm_campaign: null, utm_content: null, utm_term: null, utm_id: null}
+          - {brand: broomx, order_id: 103, order_number: "A-103", customer_id: 1, created_from_order_id: null, state: fulfilled, payment_state: paid, is_paid: true, shipping_state: shipped, total_cents: 9900, items_total_cents: 9900, adjustments_total_cents: 0, currency_code: USD, created_at: "2026-01-02 09:00:00", order_date: "2026-01-02", is_subscription: false, is_subscription_canceled: false, subscription_canceled_at: null, cancel_date: null, is_subscription_paused: false, is_created_by_admin: false, is_sales_funnel: false, acquisition_domain: null, utm_source: null, utm_medium: null, utm_campaign: null, utm_content: null, utm_term: null, utm_id: null}
+          - {brand: broomx, order_id: 104, order_number: "A-104", customer_id: 11, created_from_order_id: null, state: cancelled, payment_state: cancelled, is_paid: false, shipping_state: cancelled, total_cents: 1000, items_total_cents: 1000, adjustments_total_cents: 0, currency_code: USD, created_at: "2026-01-01 10:00:00", order_date: "2026-01-01", is_subscription: false, is_subscription_canceled: false, subscription_canceled_at: null, cancel_date: null, is_subscription_paused: false, is_created_by_admin: false, is_sales_funnel: false, acquisition_domain: null, utm_source: null, utm_medium: null, utm_campaign: null, utm_content: null, utm_term: null, utm_id: null}
+          - {brand: broomx, order_id: 105, order_number: "A-105", customer_id: 11, created_from_order_id: null, state: fulfilled, payment_state: paid, is_paid: true, shipping_state: shipped, total_cents: 2000, items_total_cents: 2000, adjustments_total_cents: 0, currency_code: USD, created_at: "2026-02-05 10:00:00", order_date: "2026-02-05", is_subscription: false, is_subscription_canceled: false, subscription_canceled_at: null, cancel_date: null, is_subscription_paused: false, is_created_by_admin: false, is_sales_funnel: false, acquisition_domain: null, utm_source: null, utm_medium: null, utm_campaign: null, utm_content: null, utm_term: null, utm_id: null}
+      - input: ref('dim_brands')
+        rows:
+          - {brand: broomx, brand_key: bk-broomx, prices_include_vat: false, vat_rate: 0, usd_rate: 1}
+      - input: ref('dim_customers')
+        rows:
+          - {brand: broomx, customer_id: 10, customer_key: ck-10, first_order_date: "2026-01-01"}
+          - {brand: broomx, customer_id: 11, customer_key: ck-11, first_order_date: "2026-02-05"}
+      - input: ref('int_order_costs')
+        rows:
+          - {brand: broomx, order_id: 100, cost_of_order_cents: 0}
+          - {brand: broomx, order_id: 101, cost_of_order_cents: 0}
+          - {brand: broomx, order_id: 103, cost_of_order_cents: 0}
+      - input: ref('int_order_first_items')
+        rows: []
+      - input: ref('stg_crm__refund_payments')
+        rows:
+          - {brand: broomx, order_number: "A-101", refund_amount_excl_vat: 10.00, state: completed}
+    expect:
+      # A cancelled order is still a non-cart order: it stays in the fact (is_revenue_order and the
+      # reporting marts filter it), with no cost and no refunds. The test account's order 103 is
+      # dropped. Customer 11's first order was cancelled, so their periods count from order 105.
+      rows:
+        - {order_id: 100, gross_sales: 50.00, contribution_margin: 50.00, days_since_customer_first_order: 0, cohort_number: 0}
+        - {order_id: 101, gross_sales: 30.00, contribution_margin: 20.00, days_since_customer_first_order: 35, cohort_number: 1}
+        - {order_id: 102, gross_sales: 99.00, contribution_margin: 99.00, days_since_customer_first_order: 36, cohort_number: 1}
+        - {order_id: 104, gross_sales: 10.00, contribution_margin: 10.00, days_since_customer_first_order: -35, cohort_number: -2}
+        - {order_id: 105, gross_sales: 20.00, contribution_margin: 20.00, days_since_customer_first_order: 0, cohort_number: 0}

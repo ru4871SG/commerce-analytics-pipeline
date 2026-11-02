@@ -1,0 +1,82 @@
+# The Declarative Automation Bundle f the clickstream's Spark
+# engine: the crm_lakehouse wheel, and the job that processes one planned batch with it.
+#
+# The orchestrator (Airflow or Dagster) owns the schedule and the decision: it plans each batch,
+# and triggers this job, with the batch id, only when the gate sends the batch to Spark.
+bundle:
+  name: crm_lakehouse
+  databricks_cli_version: "1.21.0"
+
+include:
+  - resources/*.yml
+
+artifacts:
+  crm_lakehouse:
+    type: whl
+    path: .
+    # No build step: a deployment uploads the wheel the release built and recorded
+    # (scripts/lakehouse_release.py), never one rebuilt on the spot. The build is reproducible
+    # (SOURCE_DATE_EPOCH from the commit), so CI can rebuild it and check the SHA-256 matches.
+    files:
+      - source: dist/crm_lakehouse-*.whl
+
+sync:
+  # Only the wheel is deployed; the job runs nothing from synced files
+  paths: []
+
+variables:
+  catalog:
+    description: The Unity Catalog catalog the shared tables are in.
+    default: dev
+  location_flag:
+    description: How the job is told where the tables are. --storage-root on Databricks; --root for the local workspace.
+    default: --storage-root
+  location:
+    description: >
+      The external location of the shared tables (both engines write them, so they are external
+      tables, not managed ones), or for the local workspace the folder that stands in for Unity Catalog.
+  runtime_principal:
+    description: Application id of the service principal the job runs as in production.
+    default: ""
+  orchestrator_principal:
+    description: Application id of the orchestrator's service principal. It may run this job and nothing else.
+  alerts_email:
+    description: Who hears about a failed run.
+    default: data-alerts@example.com
+
+targets:
+  # A developer's copy: names prefixed "[dev <user>]", runs as the developer, in the dev catalog.
+  # The workspace comes from the CLI's authentication (DATABRICKS_HOST or a profile).
+  dev:
+    mode: development
+    default: true
+    variables:
+      catalog: dev
+      location: s3://bigdata-data-lake/lakehouse/dev
+
+  # Production: deployed only by .github/workflows/lakehouse.yml, after review, as the deployment
+  # service principal; the job runs as a separate runtime principal that holds the Unity Catalog
+  # grants (lakehouse/setup/unity_catalog.sql).
+  prod:
+    mode: production
+    workspace:
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      catalog: prod
+      location: s3://bigdata-data-lake/lakehouse/prod
+    run_as:
+      service_principal_name: ${var.runtime_principal}
+
+  # The local stand-in for a workspace (local/databricks_workspace.py): the same bundle deployed
+  # to a fake Jobs and Workspace API on 127.0.0.1, which runs the deployed wheel with local Spark.
+  # It proves the deployment process and the deployed job end to end without a Databricks account.
+  local:
+    mode: production
+    workspace:
+      host: http://127.0.0.1:8770
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      catalog: local
+      location_flag: --root
+      orchestrator_principal: local-orchestrator
+      # location: the absolute path of .local/lakehouse, passed by scripts/lakehouse_release.py

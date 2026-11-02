@@ -1,0 +1,43 @@
+name: executive_report
+version: "1.0.0"
+
+profile: executive_report
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+
+clean-targets: ["target", "dbt_packages", "logs"]
+
+vars:
+  # The date every "MTD / last 30 days / churn at day N" figure is measured from.
+  # Leave it null to use the latest order date in the data
+  as_of_date: null
+  # Test accounts excluded from the customer cohort tables
+  excluded_customer_ids: [1, 4]
+  # Length of the subscription-survival and rebuy curves, in days.
+  curve_max_day: 200
+  # The source stores UTC timestamps; the business runs on New York time, so every date (order
+  # day, cancellation day, refund day, the as-of date) is the New York calendar day. Keep it in
+  # step with TIMEZONE in dags/crm_pipeline/config.py, which schedules the pipeline.
+  business_timezone: America/New_York
+
+# Medallion layers. Bronze is the RAW database: the Airflow loader or the Dagster job writes
+# RAW.CRM and dbt only reads it (models/bronze/_sources.yml). dbt builds silver and gold in
+# ANALYTICS.
+seeds:
+  executive_report:
+    +schema: silver
+    +tags: ["silver"]
+
+models:
+  executive_report:
+    silver:
+      +schema: silver
+      +materialized: view
+      +tags: ["silver"]
+    gold:
+      +schema: gold
+      +materialized: table
+      +tags: ["gold"]

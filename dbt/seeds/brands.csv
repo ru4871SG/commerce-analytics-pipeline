@@ -1,0 +1,4 @@
+brand,brand_name,source_database,load_from_source,currency_code,prices_include_vat,vat_rate
+broomx,Broomx,crm_broomx,true,USD,false,0.00
+wecare,WeCare,crm_wecare,true,GBP,true,0.20
+greenz,Greenz,crm_greenz,true,GBP,true,0.20

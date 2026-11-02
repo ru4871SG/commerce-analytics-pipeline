@@ -1,0 +1,161 @@
+models:
+  - name: stg_crm__customers
+    description: One row per customer, all brands. Email is never copied to bronze.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, customer_id]
+    columns:
+      - name: brand
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('brands')
+                field: brand
+
+  - name: stg_crm__orders
+    description: One row per order (carts included) for every brand. Flags are booleans, amounts are in cents.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, order_id]
+    columns:
+      - name: brand
+        description: Brand key from the brand registry (seeds/brands.csv).
+        data_tests:
+          - not_null
+          - relationships:      # a brand loaded into RAW but missing from the registry
+              arguments:
+                to: ref('brands')
+                field: brand
+      - name: order_id
+        data_tests:
+          - not_null
+      - name: order_date
+        description: Calendar date the order was created (UTC).
+        data_tests:
+          - not_null
+
+  - name: stg_crm__order_items
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, order_item_id]
+
+  - name: stg_crm__products
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, product_id]
+
+  - name: stg_crm__product_variants
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, variant_id]
+    columns:
+      - name: purchase_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['Subscribe', 'Upsell', 'One-Time Purchase']
+
+  - name: stg_crm__product_costs
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, sku]
+
+  - name: stg_crm__processing_costs
+    description: One row per brand with the per-order processing costs, in cents.
+    columns:
+      - name: brand
+        data_tests:
+          - unique
+          - not_null
+
+  - name: stg_crm__refund_payments
+    description: One row per refund payment. refund_amount_excl_vat is in currency units, VAT removed where prices include it.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, refund_payment_id]
+
+  - name: int_order_item_costs
+    description: Cost of every order line of a non-cart order, in cents. NULL when the product has no cost SKU.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, order_item_id]
+
+  - name: int_order_costs
+    description: Cost of every non-cart order in cents, summed from its lines.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, order_id]
+    columns:
+      - name: cost_of_order_cents
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+              config:
+                severity: warn     # a negative cost means a bad product cost row, not a broken pipeline
+
+  - name: int_order_first_items
+    description: The first item of every order, with its product name and warehouse SKU.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, order_id]
+
+  - name: stg_crm__marketing_spend
+    description: One row per brand, day, channel, medium and campaign of ad spend, in cents of the brand's currency.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, spend_date, utm_source, utm_medium, utm_campaign]
+    columns:
+      - name: spend_cents
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+
+  - name: stg_crm__orders_changes
+    description: Every version of an order the loader has copied, with its state columns.
+    columns:
+      - name: updated_at
+        data_tests: [not_null]
+
+  - name: stg_web__daily_funnel
+    description: >
+      The storefront funnel per brand, New York day, channel and device, from the lakehouse
+      (source web.daily_funnel). Session counts add up across days, channels and devices.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, business_date, channel, device]
+    columns:
+      - name: brand
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('brands')
+                field: brand
+      - name: engine
+        description: The engine that last rebuilt the day, pandas or spark.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['pandas', 'spark']
+      - name: sessions
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1

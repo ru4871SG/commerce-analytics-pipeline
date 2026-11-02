@@ -1,0 +1,29 @@
+# Dagster's instance configuration. scripts/local.sh copies this file into $DAGSTER_HOME (.dagster).
+# Storage is the default SQLite under $DAGSTER_HOME/storage.
+
+run_queue:
+  # The report job must run one at a time: the stream offsets are a load time
+  tag_concurrency_limits:
+    - key: "crm/report"
+      value: "1"
+      limit: 1
+    # The clickstream job too: two engines must never write the lakehouse's tables at once.
+    - key: "crm/clickstream"
+      value: "1"
+      limit: 1
+
+run_monitoring:
+  enabled: true
+  poll_interval_seconds: 30
+  start_timeout_seconds: 300
+  cancel_timeout_seconds: 300
+  # Default ceiling; the report job sets dagster/max_runtime to this too.
+  max_runtime_seconds: 21600
+
+python_logs:
+  managed_python_loggers:
+    - crm_pipeline
+  python_log_level: INFO
+
+telemetry:
+  enabled: false

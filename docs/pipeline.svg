@@ -1,0 +1,191 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 846" width="980" height="846" role="img" aria-labelledby="title desc">
+  <title id="title">The end-to-end pipeline</title>
+  <desc id="desc">Two paths run side by side through the medallion layers. A demo-only simulator writes each day's shop activity. The CRM: PostgreSQL, a Python loader, Snowflake bronze (RAW.CRM and its change log), silver and gold built by dbt; dbt also reads the orders' change log for the order history, and the Live tiles' dynamic table reads Snowflake bronze directly. The storefront clickstream: export files land in a volume, a gate sends each batch to pandas in the worker or to a Spark job on Databricks, both build the same Delta bronze, silver and gold, and the gold funnel is copied into Snowflake bronze (RAW.WEB), where dbt reads it into silver and joins it with the CRM. Superset reads Snowflake gold.</desc>
+  <style>
+    svg { --bg: #ffffff; --line: #d0d7de; --text: #1f2328; --muted: #59636e; --arrow: #57606a;
+          --src-fill: #f6f8fa; --src: #8c959f; --step-fill: #f5f0ff; --step: #8250df;
+          --sf-fill: #ddf4ff; --sf: #0969da; --dl-fill: #fff1ec; --dl: #d4532b;
+          --serve-fill: #dafbe1; --serve: #1a7f37; }
+    @media (prefers-color-scheme: dark) {
+      svg { --bg: #0d1117; --line: #30363d; --text: #e6edf3; --muted: #9198a1; --arrow: #8b949e;
+            --src-fill: #161b22; --src: #6e7681; --step-fill: #231a38; --step: #a371f7;
+            --sf-fill: #0c2a47; --sf: #4493f8; --dl-fill: #33190f; --dl: #f0883e;
+            --serve-fill: #0f2a19; --serve: #3fb950; }
+    }
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; fill: var(--text); }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .lane { font-size: 13px; font-weight: 700; fill: var(--muted); }
+    .row { font-size: 10.5px; font-weight: 700; letter-spacing: 1.2px; fill: var(--muted); }
+    .name { font-size: 13.5px; font-weight: 700; }
+    .detail { font-size: 11.5px; fill: var(--muted); }
+    .label { font-size: 11px; fill: var(--muted); }
+    .strong { font-weight: 700; fill: var(--text); }
+    .tag { font-size: 10px; font-weight: 700; letter-spacing: 0.8px; }
+    .tag-sf { fill: var(--sf); }
+    .tag-dl { fill: var(--dl); }
+    .card { fill: var(--bg); stroke: var(--line); }
+    .src { fill: var(--src-fill); stroke: var(--src); stroke-width: 1.5; }
+    .step { fill: var(--step-fill); stroke: var(--step); stroke-width: 1.5; }
+    .sf { fill: var(--sf-fill); stroke: var(--sf); stroke-width: 1.5; }
+    .dl { fill: var(--dl-fill); stroke: var(--dl); stroke-width: 1.5; }
+    .serve { fill: var(--serve-fill); stroke: var(--serve); stroke-width: 1.5; }
+    .demo { fill: none; stroke: var(--src); stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .flow { fill: none; stroke: var(--arrow); stroke-width: 1.6; }
+    .dashed { stroke-dasharray: 5 4; }
+    .head { fill: var(--arrow); }
+    .divider { stroke: var(--line); stroke-width: 1; stroke-dasharray: 2 4; }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="head" d="M0 0 L10 5 L0 10 z"/>
+    </marker>
+  </defs>
+
+  <rect class="card" x="0.5" y="0.5" width="979" height="845" rx="12"/>
+
+  <!-- lanes and rows -->
+  <text class="lane" x="120" y="38">CRM · relational, transactional</text>
+  <text class="lane" x="500" y="38">Storefront clickstream · semi-structured event files</text>
+  <text class="row" x="32" y="139">SOURCE</text>
+  <text class="row" x="32" y="305">INGEST</text>
+  <text class="row" x="32" y="473">BRONZE</text>
+  <text class="row" x="32" y="571">SILVER</text>
+  <text class="row" x="32" y="669">GOLD</text>
+  <text class="row" x="32" y="789">SERVE</text>
+  <line class="divider" x1="24" y1="192" x2="956" y2="192"/>
+  <line class="divider" x1="24" y1="418" x2="956" y2="418"/>
+  <line class="divider" x1="24" y1="518" x2="956" y2="518"/>
+  <line class="divider" x1="24" y1="616" x2="956" y2="616"/>
+  <line class="divider" x1="24" y1="738" x2="956" y2="738"/>
+
+  <!-- demo simulator -->
+  <rect class="demo" x="120" y="52" width="828" height="28" rx="14"/>
+  <text class="label" x="534" y="70" text-anchor="middle"><tspan class="strong">Demo only</tspan> · <tspan class="mono">crm_daily_activity</tspan>, 07:00 New York: writes yesterday's orders into the CRMs, and the collector's clickstream export for that day</text>
+  <path class="flow dashed" d="M290 80 V96" marker-end="url(#arrow)"/>
+  <path class="flow dashed" d="M724 80 V96" marker-end="url(#arrow)"/>
+
+  <!-- SOURCE -->
+  <rect class="src" x="120" y="98" width="340" height="74" rx="8"/>
+  <text class="name" x="134" y="121">PostgreSQL · the shops' CRMs</text>
+  <text class="detail" x="134" y="141"><tspan class="mono">crm_broomx</tspan> · <tspan class="mono">crm_wecare</tspan> · <tspan class="mono">crm_greenz</tspan></text>
+  <text class="detail" x="134" y="159">normalized transactional tables, incremental daily changes</text>
+
+  <rect class="src" x="500" y="98" width="448" height="74" rx="8"/>
+  <text class="name" x="514" y="121">Storefront analytics collector</text>
+  <text class="detail" x="514" y="141">one gzipped JSON-lines file per brand and day</text>
+  <text class="detail" x="514" y="159">semi-structured web events (views, cart, checkout, purchase)</text>
+
+  <!-- INGEST: CRM -->
+  <path class="flow" d="M290 172 V206" marker-end="url(#arrow)"/>
+  <rect class="step" x="120" y="208" width="340" height="92" rx="8"/>
+  <text class="name" x="134" y="231">Load the changed rows · Python</text>
+  <text class="detail" x="134" y="251">one read-only snapshot per brand; reference tables whole</text>
+  <text class="detail" x="134" y="269">INSERTs for small batches; write_pandas for bulk loads</text>
+  <text class="detail mono" x="134" y="287">ingest_&lt;brand&gt; · bronze_loader.py</text>
+  <text class="label" x="210" y="322">No Spark here: direct warehouse loading handles</text>
+  <text class="label" x="210" y="338">incremental relational updates without a cluster.</text>
+
+  <!-- INGEST: clickstream -->
+  <path class="flow" d="M600 172 V206" marker-end="url(#arrow)"/>
+  <rect class="dl" x="500" y="208" width="200" height="74" rx="8"/>
+  <text class="name" x="514" y="231">Landing volume</text>
+  <text class="detail mono" x="514" y="251">web_events/*.json.gz</text>
+  <text class="detail" x="514" y="269">files waiting for bronze</text>
+  <path class="flow" d="M700 245 H728" marker-end="url(#arrow)"/>
+  <rect class="step" x="730" y="208" width="218" height="74" rx="8"/>
+  <text class="name" x="744" y="231">◆ The gate: plan the batch</text>
+  <text class="detail" x="744" y="251">It decides whether the batch</text>
+  <text class="detail" x="744" y="269">fits within the worker's memory budget</text>
+
+  <path class="flow" d="M839 282 V300 H607 V316" marker-end="url(#arrow)"/>
+  <path class="flow" d="M839 300 V316" marker-end="url(#arrow)"/>
+  <text class="label" x="615" y="312"><tspan class="strong">fits</tspan>: in process</text>
+  <text class="label" x="849" y="312"><tspan class="strong">too big</tspan>: Spark</text>
+
+  <rect class="step" x="500" y="318" width="214" height="78" rx="8"/>
+  <text class="name" x="514" y="341">pandas + delta-rs</text>
+  <text class="detail" x="514" y="361">in the worker, no cluster</text>
+  <text class="detail" x="514" y="379">daily incremental batches</text>
+
+  <rect class="step" x="732" y="318" width="216" height="78" rx="8"/>
+  <text class="name" x="746" y="341">Spark · Databricks job</text>
+  <text class="detail" x="746" y="361">the bundle's job, serverless</text>
+  <text class="detail" x="746" y="379">large backlogs and historical backfills</text>
+
+  <!-- BRONZE -->
+  <text class="tag tag-sf" x="290" y="432" text-anchor="middle">SNOWFLAKE BRONZE</text>
+  <text class="tag tag-dl" x="724" y="432" text-anchor="middle">DELTA BRONZE</text>
+  <path class="flow" d="M195 300 V436" marker-end="url(#arrow)"/>
+  <path class="flow" d="M448 300 V436" marker-end="url(#arrow)"/>
+  <text class="label" x="442" y="382" text-anchor="end">reference tables,</text>
+  <text class="label" x="442" y="396" text-anchor="end">copied whole</text>
+  <rect class="sf" x="120" y="438" width="178" height="62" rx="8"/>
+  <text class="name mono" x="132" y="463">RAW.CRM.*_CHANGES</text>
+  <text class="detail" x="132" y="483">every version, append-only</text>
+  <path class="flow" d="M298 469 H334" marker-end="url(#arrow)"/>
+  <text class="label" x="317" y="461" text-anchor="middle">merge</text>
+  <rect class="sf" x="336" y="438" width="124" height="62" rx="8"/>
+  <text class="name mono" x="348" y="463">RAW.CRM</text>
+  <text class="detail" x="348" y="483">reconciled</text>
+
+  <path class="flow" d="M607 396 V436" marker-end="url(#arrow)"/>
+  <path class="flow" d="M840 396 V436" marker-end="url(#arrow)"/>
+  <text class="label" x="723" y="409" text-anchor="middle">same tables either way</text>
+  <rect class="dl" x="500" y="438" width="448" height="62" rx="8"/>
+  <text class="name mono" x="514" y="463">bronze.web_events</text>
+  <text class="detail" x="514" y="483">every line as it landed, as text, with its file and batch</text>
+
+  <!-- SILVER -->
+  <text class="tag tag-sf" x="290" y="530" text-anchor="middle">SNOWFLAKE SILVER</text>
+  <text class="tag tag-dl" x="724" y="530" text-anchor="middle">DELTA SILVER</text>
+  <path class="flow" d="M150 500 V534" marker-end="url(#arrow)"/>
+  <text class="label" x="158" y="512">order history</text>
+  <path class="flow" d="M398 500 V534" marker-end="url(#arrow)"/>
+  <text class="label" x="406" y="530">dbt build</text>
+  <rect class="sf" x="120" y="536" width="340" height="62" rx="8"/>
+  <text class="name" x="134" y="561"><tspan class="mono">ANALYTICS.SILVER</tspan> · dbt</text>
+  <text class="detail" x="134" y="581">staging views and the business rules</text>
+
+  <path class="flow" d="M840 500 V534" marker-end="url(#arrow)"/>
+  <rect class="dl" x="500" y="536" width="448" height="62" rx="8"/>
+  <text class="name mono" x="514" y="561">silver.web_events</text>
+  <text class="detail" x="514" y="581">valid events, one row per event (rules, deduplication, MERGE)</text>
+
+  <!-- GOLD -->
+  <text class="tag tag-sf" x="290" y="628" text-anchor="middle">SNOWFLAKE GOLD</text>
+  <text class="tag tag-sf" x="590" y="628" text-anchor="middle">SNOWFLAKE BRONZE</text>
+  <text class="tag tag-dl" x="844" y="628" text-anchor="middle">DELTA GOLD</text>
+  <path class="flow" d="M398 598 V632" marker-end="url(#arrow)"/>
+  <text class="label" x="406" y="628">dbt</text>
+  <rect class="sf" x="120" y="634" width="340" height="76" rx="8"/>
+  <text class="name" x="134" y="659"><tspan class="mono">ANALYTICS.GOLD</tspan> · dbt</text>
+  <text class="detail" x="134" y="679">star schema, <tspan class="mono">exec_*</tspan>, and the <tspan class="mono">exec_web_*</tspan> funnel</text>
+  <text class="detail" x="134" y="697">Live tiles: dynamic table straight from <tspan class="mono">RAW.CRM</tspan></text>
+
+  <path class="flow" d="M900 598 V632" marker-end="url(#arrow)"/>
+  <rect class="dl" x="740" y="634" width="208" height="62" rx="8"/>
+  <text class="name mono" x="752" y="659">gold.web_daily_funnel</text>
+  <text class="detail" x="752" y="679">sessions by day and channel</text>
+  <path class="flow" d="M740 665 H682" marker-end="url(#arrow)"/>
+  <text class="label" x="711" y="658" text-anchor="middle">publish</text>
+  <text class="label" x="711" y="682" text-anchor="middle">daily</text>
+  <text class="label" x="711" y="695" text-anchor="middle">funnel</text>
+  <rect class="sf" x="500" y="634" width="180" height="62" rx="8"/>
+  <text class="name mono" x="512" y="656">RAW.WEB</text>
+  <text class="detail" x="512" y="674">the gold funnel, copied in</text>
+  <text class="detail" x="512" y="689">(RAW database)</text>
+  <path class="flow" d="M500 653 H480 V567 H462" marker-end="url(#arrow)"/>
+  <text class="label" x="487" y="611">dbt: <tspan class="mono">stg_web__daily_funnel</tspan></text>
+
+  <!-- SERVE -->
+  <path class="flow" d="M290 710 V750" marker-end="url(#arrow)"/>
+  <path class="flow" d="M430 710 V729 H808 V750" marker-end="url(#arrow)"/>
+  <text class="label" x="560" y="724">gold rebuilt: the activation job</text>
+  <rect class="serve" x="120" y="752" width="520" height="66" rx="8"/>
+  <text class="name" x="134" y="777">Superset · Executive Report</text>
+  <text class="detail" x="134" y="798">Executive charts, KPI cards, and Brand filter; Storefront reads <tspan class="mono">exec_web_*</tspan></text>
+  <rect class="step" x="668" y="752" width="280" height="66" rx="8"/>
+  <text class="name mono" x="682" y="777">crm_executive_activation</text>
+  <text class="detail" x="682" y="798">KPI digest to Slack · dashboard check</text>
+
+</svg>

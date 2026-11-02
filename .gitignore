@@ -1,0 +1,40 @@
+# Local environments (scripts/local.sh)
+.venv/
+.venv-dbt/
+.venv-dagster/
+.venv-fakesnow/
+.venv-superset/
+.venv-spark/
+.airflow/
+# Superset's metadata 
+.superset*/
+.dagster/
+.local/
+.env
+
+# The lakehouse wheel 
+lakehouse/dist/
+# Spark's default warehouse folder
+spark-warehouse/
+
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+dbt/.user.yml
+dbt/package-lock.concurrent-update-lock
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Editor and local files
+.DS_Store
+.vscode/settings.json
+.claude/settings.json
+/test_local/
+
+# Generated Superset bundle (the ZIP and the unpacked YAML)
+local/superset/bundle/
+local/superset/executive_report.zip

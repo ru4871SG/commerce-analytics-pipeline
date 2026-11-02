@@ -1,0 +1,20 @@
+services:
+  crm-source:
+    image: docker.io/library/postgres:18
+    container_name: crm-source
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "127.0.0.1:5433:5432" # 5433
+    volumes:
+      - ./source_db:/docker-entrypoint-initdb.d:ro # runs *.sql (alphabetical) on the FIRST start only
+      - crm-source-pgdata:/var/lib/postgresql # postgres 18+ keeps its data in /var/lib/postgresql/18
+    healthcheck:
+      # Over TCP: the entrypoint's init-time server listens on the socket only
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  crm-source-pgdata:

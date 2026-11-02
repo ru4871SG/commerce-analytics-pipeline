@@ -1,0 +1,49 @@
+resources:
+  jobs:
+    web_events_spark:
+      name: web_events_spark
+      description: >
+        Process one clickstream batch on Spark: bronze, silver and gold for the days its sessions
+        started on. Triggered by the orchestrator when the gate finds the batch too big for its
+        in-process engine. __setup__ creates the shared tables; __healthcheck__ checks them.
+      max_concurrent_runs: 1 # batches are planned one at a time; so are their runs
+      timeout_seconds: 14400
+      queue:
+        enabled: true
+      parameters:
+        - name: batch_id
+          default: "" # an empty id fails the run: the orchestrator always passes one
+      email_notifications:
+        on_failure:
+          - ${var.alerts_email}
+      tags:
+        team: delivery-data
+        component: lakehouse
+      tasks:
+        - task_key: process_batch
+          environment_key: default
+          python_wheel_task:
+            package_name: crm_lakehouse
+            entry_point: web-events-spark
+            parameters:
+              - --catalog
+              - ${var.catalog}
+              - ${var.location_flag}
+              - ${var.location}
+              - --batch-id
+              - "{{job.parameters.batch_id}}"
+              - --orchestrator
+              - databricks
+              - --run-id
+              - "{{job.run_id}}"
+          # The orchestrator retries a failed batch on its next plan, with the same files
+          max_retries: 0
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "4"
+            dependencies:
+              - ../dist/*.whl
+      permissions:
+        - service_principal_name: ${var.orchestrator_principal}
+          level: CAN_MANAGE_RUN

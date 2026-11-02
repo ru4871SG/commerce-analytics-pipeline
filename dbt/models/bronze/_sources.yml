@@ -1,0 +1,87 @@
+sources:
+  - name: crm
+    description: >
+      Bronze layer. Tables copied from each brand's CRM database (PostgreSQL) by the Airflow DAG
+      or the Dagster job (dags/crm_pipeline/bronze_loader.py). All brands share one table per
+      source table; _BRAND says which brand a row came from and _LOADED_AT when it was loaded.
+      Customers, orders, order items, refunds and ad spend are loaded incrementally: the changed
+      rows land in <TABLE>_CHANGES, and a stream and merge task keep these tables current. Customer
+      emails and other PII are never copied. dbt only reads this layer.
+    database: "{{ env_var('BRONZE_DATABASE', 'RAW') }}"
+    schema: crm
+    config:
+      loaded_at_field: _loaded_at
+      freshness:
+        # _loaded_at is when a row last changed. Orders change every day (renewals at least), so
+        # a whole day without a changed order means the source or the load has stopped.
+        warn_after: { count: 8, period: hour }
+        error_after: { count: 24, period: hour }
+    tables:
+      - name: customers
+        description: One row per customer. The email column is excluded by the loader, before it reaches bronze.
+        config:
+          freshness: null # _LOADED_AT is when a row last changed, and a day may bring no new customer
+      - name: orders
+        description: One row per order (carts included), raw application columns only.
+      - name: orders_changes
+        description: >
+          Append-only: every version of an order the loader has copied, one row per order and load
+          in which it had changed. The stream and merge task carry the latest version into orders;
+          this table keeps the history.
+        config:
+          freshness: null # loaded with orders, whose freshness is checked
+      - name: order_items
+        description: One row per order line, linked to its order and product variant.
+      - name: refund_payments
+        description: One row per refund, linked to the order by order_number.
+        config:
+          freshness: null # a day without refunds is normal
+      - name: products
+        description: Product catalogue, including the fulfilment cost SKU.
+        config:
+          freshness: null # reference data, rarely changes
+      - name: product_variants
+        description: Product variants. The code encodes purchase type (vip = Subscribe, -u = Upsell).
+        config:
+          freshness: null
+      - name: product_costs
+        description: Fulfilment cost per cost SKU, in cents.
+        config:
+          freshness: null
+      - name: processing_costs
+        description: One row per brand. Processing cost of the first and each additional item, in cents.
+        config:
+          freshness: null
+      - name: marketing_spend
+        description: >
+          Ad spend per day, channel (utm_source), medium and campaign, imported into the CRM from
+          the ad platforms. Amount in cents of the brand's currency.
+        config:
+          freshness: null # a brand may pause its ads
+
+  - name: web
+    description: >
+      The storefront clickstream's gold, published from the lakehouse by the Airflow DAG or the
+      Dagster job (dags/crm_pipeline/lakehouse.py). The events themselves stay in the lakehouse, 
+      millions of rows of semi-structured JSON, processed by pandas or
+      Spark, whichever the gate chooses for the batch. Only the daily funnel, a few hundred rows a
+      day, reaches the warehouse, where it meets the orders and the ad spend.
+    database: "{{ env_var('BRONZE_DATABASE', 'RAW') }}"
+    schema: web
+    config:
+      loaded_at_field: _loaded_at
+      freshness:
+        # A clickstream outage warns; it does not stop the report the CRM feeds
+        warn_after: { count: 30, period: hour }
+    tables:
+      - name: daily_funnel
+        description: >
+          Sessions per brand, New York day, channel and device, by the step of the funnel they
+          reached. A batch replaces every day its sessions started on. _batch_id and _engine say
+          which batch last rebuilt the day, and on which engine.
+      - name: event_batches
+        description: >
+          One row per clickstream batch: its files and size, the engine the gate chose and why,
+          and what the engine did (rows loaded, rows each rule dropped, days rebuilt).
+        config:
+          freshness: null # loaded with daily_funnel

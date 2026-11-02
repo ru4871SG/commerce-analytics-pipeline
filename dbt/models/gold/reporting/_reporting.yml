@@ -1,0 +1,278 @@
+models:
+  - name: exec_daily_brand_metrics
+    description: >
+      One row per brand per day. Revenue is gross sales minus the refunds issued that day. Superset:
+      weekly revenue and contribution margin (bars, time grain Week, SUM(revenue_usd) and
+      SUM(contribution_margin_usd), dimension brand_name), weekly new
+      customers (line, SUM(new_customers)), and monthly
+      subscriptions (mixed chart, time grain Month: bars SUM(new_subscriptions) and
+      SUM(canceled_subscriptions), line SUM(net_subscriptions)).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, date_day]
+    columns:
+      - name: brand_name
+        description: Brand as shown in the dashboard. The dashboard's brand filter uses this column.
+        data_tests:
+          - not_null
+      - name: canceled_subscriptions
+        description: Subscriptions cancelled that day, as a negative number so bars point down.
+
+  - name: exec_active_subscriptions_weekly
+    description: >
+      Active subscriptions per brand at the end of each Monday-start week. Superset: line chart,
+      x = week_start, SUM(active_subscriptions), dimension brand_name.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, week_start]
+    columns:
+      - name: active_subscriptions
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+
+  - name: exec_subscription_survival
+    description: >
+      Share of subscriptions at least N days old still active N days after they started. Superset:
+      line chart, x = day_offset, MAX(subscribers_left_rate), dimension brand_name.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, day_offset]
+    columns:
+      - name: subscribers_left_rate
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+
+  - name: exec_rebuy_curve
+    description: >
+      Share of customers who ordered again within N days of their first order. Superset: line
+      chart, x = day_offset, MAX(rebuy_rate), dimension brand_name.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, day_offset]
+    columns:
+      - name: rebuy_rate
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+
+  - name: exec_cohort_contribution_margin
+    description: >
+      Cumulative contribution margin per customer (each order's refunds go with it), by first-order
+      month and 30-day period, for the periods every customer of the month has finished. Superset: pivot table, rows
+      first_order_month (time grain Month), columns cohort_number, metric
+      AVG(contribution_margin_per_customer_usd).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, first_order_month, cohort_number]
+
+  - name: exec_daily_orders_live
+    description: >
+      Orders and sales (USD, without VAT, before refunds and cost) per brand and day. A view over
+      fct_daily_orders_live, the Snowflake dynamic table (15-minute target lag) that refreshes
+      itself after the merge task applies new changes; the brand name, VAT and USD rate are
+      applied in the view. Superset: Big Number with trendline, x = date_day (time grain Day),
+      SUM(orders) and SUM(sales_usd).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, date_day]
+    columns:
+      - name: sales_usd
+        data_tests: [not_null]
+
+  - name: exec_kpi_snapshot
+    description: >
+      One row per brand with every number card, measured at as_of_date. Superset: one Big Number
+      chart per card, SUM(<column>) for revenue, contribution margin, customers and subscriptions,
+      SUM(lost_subscriptions_lNd) / SUM(active_subscriptions_start_lNd) for period churn, and
+      AVG(<column>) for the cancelled-within-N-days rates. Amounts are in USD at constant-currency
+      rates.
+    columns:
+      - name: brand
+        data_tests: [unique, not_null]
+      - name: revenue_mtd_usd
+        description: Order totals without VAT, first of the month to the as-of date, minus the refunds issued in those days. Before the cost of the orders.
+      - name: contribution_margin_mtd_usd
+        description: Revenue minus the cost of those orders. Before ad spend.
+      - name: churn_rate_l30d
+        description: Subscriptions lost in the last 30 days / those active 30 days ago.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: churn_rate_l60d
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: churn_rate_l90d
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: canceled_within_30d_rate
+        description: Of the first subscriptions at least 30 days old, the share cancelled within 30 days of starting.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+
+  - name: exec_channel_cac_ltv
+    description: >
+      Customer acquisition cost and 90-day LTV per brand and channel, for the customers acquired in
+      the 365 days ending 90 days before the as-of date. Superset: bar charts, x = channel,
+      AVG(cac_usd) and AVG(ltv_90d_usd), and MAX(ltv_to_cac_ratio) by brand_name.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, channel]
+    columns:
+      - name: brand_name
+        data_tests: [not_null]
+      - name: acquired_customers
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: cac_usd
+        description: Ad spend per customer acquired. NULL for organic.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+
+  - name: exec_web_daily_sessions
+    description: >
+      Storefront sessions per brand, day and channel, by funnel step, with the channel's ad spend
+      that day. Superset: weekly sessions by channel (bar, time grain Week, SUM(sessions),
+      dimension channel).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, date_day, channel]
+    columns:
+      - name: brand_name
+        data_tests:
+          - not_null
+      - name: purchase_sessions
+        description: Sessions that ended in a purchase; never more than the sessions.
+        data_tests:
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "<= sessions"
+
+  - name: exec_web_channel_funnel
+    description: >
+      The funnel per brand and channel over the last 90 days: step rates, and the ad spend per
+      session and per purchase. Superset: a table, one row per channel, MAX of each rate.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, channel]
+    columns:
+      - name: brand_name
+        data_tests:
+          - not_null
+      - name: conversion_rate
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: engaged_rate
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+
+unit_tests:
+  - name: survival_counts_a_subscription_until_it_is_cancelled_and_only_once_it_is_old_enough
+    model: exec_subscription_survival
+    overrides:
+      vars:
+        as_of_date: "2026-03-31"
+        curve_max_day: 3
+    given:
+      - input: ref('dim_customers')
+        rows:
+          # Cancelled exactly 2 days after it started: active on days 0 and 1
+          - {
+              brand: broomx,
+              first_order_is_subscription: true,
+              first_order_at: "2026-01-01 08:00:00",
+              first_order_subscription_canceled_at: "2026-01-03 08:00:00",
+            }
+          # Never cancelled
+          - {
+              brand: broomx,
+              first_order_is_subscription: true,
+              first_order_at: "2026-01-01 08:00:00",
+              first_order_subscription_canceled_at: null,
+            }
+          # Started on the as-of date: 20 hours old at its end (midnight New York is 04:00 UTC), so day 0 only
+          - {
+              brand: broomx,
+              first_order_is_subscription: true,
+              first_order_at: "2026-03-31 08:00:00",
+              first_order_subscription_canceled_at: null,
+            }
+          # Not a subscription: ignored
+          - {
+              brand: broomx,
+              first_order_is_subscription: false,
+              first_order_at: "2026-01-01 08:00:00",
+              first_order_subscription_canceled_at: null,
+            }
+      - input: ref('brands')
+        rows:
+          - { brand: broomx, brand_name: Broomx }
+      - input: ref('fct_orders')
+        rows: []
+    expect:
+      rows:
+        - {
+            brand: broomx,
+            day_offset: 0,
+            subscriptions: 3,
+            active_subscriptions: 3,
+            subscribers_left_rate: 1.0,
+          }
+        - {
+            brand: broomx,
+            day_offset: 1,
+            subscriptions: 2,
+            active_subscriptions: 2,
+            subscribers_left_rate: 1.0,
+          }
+        - {
+            brand: broomx,
+            day_offset: 2,
+            subscriptions: 2,
+            active_subscriptions: 1,
+            subscribers_left_rate: 0.5,
+          }
+        - {
+            brand: broomx,
+            day_offset: 3,
+            subscriptions: 2,
+            active_subscriptions: 1,
+            subscribers_left_rate: 0.5,
+          }

@@ -1,0 +1,24 @@
+# crm_lakehouse: the clickstream's data contract and its engines.
+[build-system]
+requires = ["hatchling==1.32.4"]
+build-backend = "hatchling.build"
+
+[project]
+name = "crm-lakehouse"
+version = "0.1.2"
+description = "Storefront clickstream on the lakehouse: one data contract, a pandas and a Spark engine, and the gate that picks one per batch."
+requires-python = ">=3.10"
+# Nothing at runtime: Databricks provides Spark and Delta Lake, and the orchestrators install the
+# in-process engine's packages from requirements.txt, pinned with everything else.
+dependencies = []
+
+[project.optional-dependencies]
+inprocess = ["deltalake>=1.6,<2", "pyarrow>=21", "pandas>=2.2,<3"]
+spark = ["pyspark>=4.0,<4.3", "delta-spark>=4.0,<4.5"]
+databricks = ["databricks-sdk>=0.50"]
+
+[project.scripts]
+web-events-spark = "crm_lakehouse.spark_job:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/crm_lakehouse"]

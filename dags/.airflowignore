@@ -1,0 +1,3 @@
+# Glob syntax (Airflow 3 default). Helper modules are imported by the DAG, not parsed as DAGs.
+crm_pipeline/**
+**/__pycache__/**

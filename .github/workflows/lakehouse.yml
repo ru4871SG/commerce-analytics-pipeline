@@ -1,0 +1,163 @@
+# The lakehouse's Spark engine
+#
+#   pull request   checks: the tests (both engines, the same tables), a reproducible wheel, the
+#                  dependency audit, the bundle against the CLI's schema, a secret scan. No
+#                  workspace access: a pull request gets no credentials.
+#   push to main   release: the same checks, then the plan against production, uploaded with the
+#                  evidence (scripts/lakehouse_release.py) for review
+#                  deploy: waits for a reviewer of the `prod` environment, who reads the plan;
+#                  then checks the evidence still holds (commit, wheel bytes, code, a fresh plan
+#                  identical to the reviewed one), applies exactly that plan, and verifies the
+#                  result. It is never retried automatically.
+#
+# This repository is a demo with no workspace connected, so release and deploy skip until the
+# repository variable DATABRICKS_HOST is set (on the repository: the job's `if` reads it before
+# the job has an environment). Pull request checks need no workspace and always run.
+#
+# Credentials: none stored. Each job exchanges GitHub's OIDC token for a Databricks OAuth token
+# (an hour long) through a federation policy on the deployment service principal, which accepts
+# only this repository's `prod-plan` and `prod` environments. Its rights: deploy this bundle into
+# its own workspace folder. The job runs as another principal, which alone holds the Unity Catalog
+# grants. Repository variables: DATABRICKS_HOST, DATABRICKS_DEPLOYER_CLIENT_ID,
+# LAKEHOUSE_RUNTIME_PRINCIPAL, LAKEHOUSE_ORCHESTRATOR_PRINCIPAL.
+name: lakehouse
+
+on:
+  pull_request:
+    paths: &paths
+      - lakehouse/**
+      - dags/crm_pipeline/lakehouse.py
+      - scripts/lakehouse_release.py
+      - requirements.txt
+      - .github/workflows/lakehouse.yml
+  push:
+    branches: [main]
+    paths: *paths
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lakehouse-${{ github.ref }}
+  cancel-in-progress: false # never cut a deployment off half-way
+
+env:
+  DATABRICKS_CLI_VERSION: "1.21.0"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  checks:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # SOURCE_DATE_EPOCH comes from the commit
+      - &uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - &java
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "21"
+      - &cli
+        uses: databricks/setup-cli@2bf4520fd10723ed5a22eca62a8c8a63714a7ba9 # v1.21.0
+        with:
+          version: ${{ env.DATABRICKS_CLI_VERSION }}
+      - &spark_env
+        name: The Spark environment (.venv-spark), as scripts/local.sh install builds it
+        run: |
+          awk '/^# \[/ { on = ($2 == "[spark]"); next } on' requirements.txt > "$RUNNER_TEMP/spark.txt"
+          uv venv --python "$PYTHON_VERSION" .venv-spark
+          uv pip install --python .venv-spark/bin/python -r "$RUNNER_TEMP/spark.txt"
+          uv pip install --python .venv-spark/bin/python --no-deps -e lakehouse
+      - name: Release checks, without a plan
+        env:
+          DATABRICKS_CLI: databricks
+          CRM_SPARK_IVY_DIR: ${{ runner.temp }}/ivy2
+        run: >
+          uv run --no-project --python "$PYTHON_VERSION" --with pyyaml==6.0.3 --with jsonschema==4.25.1
+          python scripts/lakehouse_release.py release -t prod --offline
+      - &evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lakehouse-release
+          path: |
+            .local/releases/
+            lakehouse/dist/*.whl
+          include-hidden-files: true # .local/ is where the release script writes
+          if-no-files-found: ignore
+
+  release:
+    if: github.event_name == 'push' && vars.DATABRICKS_HOST != ''
+    runs-on: ubuntu-24.04
+    environment: prod-plan # main only (deployment branch rule); no reviewer: it changes nothing
+    permissions:
+      contents: read
+      id-token: write
+    env: &databricks
+      DATABRICKS_AUTH_TYPE: github-oidc
+      DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
+      DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_DEPLOYER_CLIENT_ID }}
+      BUNDLE_VAR_runtime_principal: ${{ vars.LAKEHOUSE_RUNTIME_PRINCIPAL }}
+      BUNDLE_VAR_orchestrator_principal: ${{ vars.LAKEHOUSE_ORCHESTRATOR_PRINCIPAL }}
+      DATABRICKS_CLI: databricks
+    outputs:
+      release: ${{ steps.release.outputs.release }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - *uv
+      - *java
+      - *cli
+      - *spark_env
+      - name: Release (tests, wheel, audit, plan, evidence)
+        id: release
+        env:
+          CRM_SPARK_IVY_DIR: ${{ runner.temp }}/ivy2
+        run: |
+          uv run --no-project --python "$PYTHON_VERSION" --with pyyaml==6.0.3 --with jsonschema==4.25.1 \
+            python scripts/lakehouse_release.py release -t prod
+          release="$(ls -d .local/releases/prod-* | tail -1)"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Lakehouse release $(basename "$release") for review"
+            echo '```json'
+            jq '{git, wheel, tests, security, bundle}' "$release/evidence.json"
+            echo '```'
+            echo "The plan is plan.json in the lakehouse-release artifact."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - *evidence
+
+  deploy:
+    needs: release
+    runs-on: ubuntu-24.04
+    environment: prod # a required reviewer approves, after reading the plan
+    permissions:
+      contents: read
+      id-token: write
+    env: *databricks
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - *uv
+      - *cli
+      - name: The reviewed release
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: lakehouse-release
+      - name: Deploy the reviewed plan, then verify
+        run: >
+          uv run --no-project --python "$PYTHON_VERSION" --with pyyaml==6.0.3 --with jsonschema==4.25.1
+          python scripts/lakehouse_release.py deploy -t prod --release "${{ needs.release.outputs.release }}"
+      - name: Keep the deployment's evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lakehouse-deployment
+          path: ${{ needs.release.outputs.release }}
+          include-hidden-files: true
+          retention-days: 400
