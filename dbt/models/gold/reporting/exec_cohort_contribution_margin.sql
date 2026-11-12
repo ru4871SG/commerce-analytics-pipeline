@@ -86,15 +86,16 @@ cumulative as (
 
 )
 
+-- Each column is cast to its contract type (_reporting.yml)
 select
-    c.brand,
-    brands.brand_name,
-    c.first_order_month,
-    c.cohort_number,
-    c.new_customers,
-    c.period_contribution_margin_usd,
-    c.cumulative_contribution_margin_usd,
-    c.cumulative_contribution_margin_usd / c.new_customers  as contribution_margin_per_customer_usd
+    c.brand::varchar                                                    as brand,
+    brands.brand_name::varchar                                          as brand_name,
+    c.first_order_month::date                                           as first_order_month,
+    c.cohort_number::int                                                as cohort_number,
+    c.new_customers::int                                                as new_customers,
+    c.period_contribution_margin_usd::float                             as period_contribution_margin_usd,
+    c.cumulative_contribution_margin_usd::float                         as cumulative_contribution_margin_usd,
+    (c.cumulative_contribution_margin_usd / c.new_customers)::float     as contribution_margin_per_customer_usd
 from cumulative as c
 inner join {{ ref('brands') }} as brands
     on c.brand = brands.brand

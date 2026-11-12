@@ -1,0 +1,48 @@
+# sqlfluff for the dbt project. `scripts/local.sh lint` runs it on the models and tests a change or edit.
+
+# Rules:
+
+# AL05 a table alias that is never used
+
+# AM01 DISTINCT together with GROUP BY
+
+# AM06 GROUP BY or ORDER BY mixing column names and positions
+
+# CP01 keywords not in lower case
+
+# CP03 function names not in lower case
+
+# CV03 a comma after the last column of a SELECT
+
+# CV05 a comparison with NULL that is not IS or IS NOT
+
+# JJ01 a Jinja tag without a space inside its braces
+
+# LT12 a file that does not end with one newline
+
+# RF01 a reference to a table or alias that is not in FROM
+
+# ST03 a CTE that is defined and never used
+
+# The layout rules (LT01, LT02, LT05, LT09) would flag most existing files, so they are left out.
+
+[sqlfluff]
+templater = dbt
+dialect = snowflake
+rules = AL05,AM01,AM06,CP01,CP03,CV03,CV05,JJ01,LT12,RF01,ST03
+
+# The dbt templater compiles each model with dbt itself, which opens a connection: lint starts an
+
+# empty emulator for it and sets SNOWFLAKE_PORT.
+
+[sqlfluff:templater:dbt]
+project_dir = .
+profiles_dir = .
+profile = executive_report
+target = emulator
+
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.functions]
+extended_capitalisation_policy = lower

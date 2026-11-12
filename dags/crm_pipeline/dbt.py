@@ -9,6 +9,7 @@ from collections.abc import Callable
 
 from airflow.sdk import Variable, get_current_context, task
 
+from crm_pipeline import raw_tables
 from crm_pipeline.config import DBT_PROJECT_DIR
 from crm_pipeline.dbt_env import build_args, dbt_environment
 
@@ -70,6 +71,9 @@ def dbt_task(task_id: str, check_source_freshness: bool = False, **kwargs):
 
     @task(task_id=task_id, **kwargs)
     def dbt_build() -> None:
+        # The side loads' tables are sources of dbt, and no side load is upstream of this task:
+        # one that has never run must leave an empty table, not a missing one
+        raw_tables.ensure_side_tables()
         build(get_current_context()["ti"].try_number, f"target/airflow/{task_id}", check_source_freshness,
               airflow_environment())
 

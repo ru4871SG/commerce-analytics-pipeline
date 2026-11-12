@@ -136,21 +136,22 @@ canceled_within as (
 
 )
 
+-- Each column is cast to its contract type (_reporting.yml)
 select
-    b.brand,
-    b.brand_name,
-    d.as_of_date,
+    b.brand::varchar                                as brand,
+    b.brand_name::varchar                           as brand_name,
+    d.as_of_date::date                              as as_of_date,
     {%- for name, first_day, last_day in windows %}
-    coalesce(o.gross_sales_{{ name }}_usd, 0) - coalesce(rf.refunds_{{ name }}_usd, 0)
+    (coalesce(o.gross_sales_{{ name }}_usd, 0) - coalesce(rf.refunds_{{ name }}_usd, 0))::float
                                                     as revenue_{{ name }}_usd,
-    coalesce(o.margin_before_refunds_{{ name }}_usd, 0) - coalesce(rf.refunds_{{ name }}_usd, 0)
+    (coalesce(o.margin_before_refunds_{{ name }}_usd, 0) - coalesce(rf.refunds_{{ name }}_usd, 0))::float
                                                     as contribution_margin_{{ name }}_usd,
     {%- endfor %}
-    coalesce(nc.new_customers_mtd, 0)               as new_customers_mtd,
-    coalesce(nc.new_customers_pmtd, 0)              as new_customers_pmtd,
-    coalesce(nc.new_customers_l30d, 0)              as new_customers_l30d,
-    coalesce(nc.new_customers_l60d, 0)              as new_customers_l60d,
-    coalesce(nc.new_customers_l90d, 0)              as new_customers_l90d,
+    coalesce(nc.new_customers_mtd, 0)::int          as new_customers_mtd,
+    coalesce(nc.new_customers_pmtd, 0)::int         as new_customers_pmtd,
+    coalesce(nc.new_customers_l30d, 0)::int         as new_customers_l30d,
+    coalesce(nc.new_customers_l60d, 0)::int         as new_customers_l60d,
+    coalesce(nc.new_customers_l90d, 0)::int         as new_customers_l90d,
     coalesce(o.net_subscriptions_l30d, 0)::int      as net_subscriptions_l30d,
     coalesce(o.net_subscriptions_l60d, 0)::int      as net_subscriptions_l60d,
     coalesce(o.net_subscriptions_l90d, 0)::int      as net_subscriptions_l90d,
@@ -160,12 +161,12 @@ select
                                                     as active_subscriptions_start_l{{ days }}d,
     coalesce(pc.lost_subscriptions_l{{ days }}d, 0)::int
                                                     as lost_subscriptions_l{{ days }}d,
-    pc.lost_subscriptions_l{{ days }}d / nullif(pc.active_subscriptions_start_l{{ days }}d, 0)
+    (pc.lost_subscriptions_l{{ days }}d / nullif(pc.active_subscriptions_start_l{{ days }}d, 0))::float
                                                     as churn_rate_l{{ days }}d,
     {%- endfor %}
-    cw.canceled_within_30d_rate,
-    cw.canceled_within_60d_rate,
-    cw.canceled_within_90d_rate
+    cw.canceled_within_30d_rate::float              as canceled_within_30d_rate,
+    cw.canceled_within_60d_rate::float              as canceled_within_60d_rate,
+    cw.canceled_within_90d_rate::float              as canceled_within_90d_rate
 from {{ ref('brands') }} as b
 cross join dates as d
 inner join orders as o

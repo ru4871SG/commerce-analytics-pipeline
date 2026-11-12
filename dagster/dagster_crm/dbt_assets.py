@@ -14,6 +14,7 @@ from pathlib import Path
 from dagster import AssetKey, Failure
 from dagster_dbt import DagsterDbtTranslator, DbtCliResource, DbtProject, dbt_assets
 
+from crm_pipeline import raw_tables
 from crm_pipeline.config import DBT_PROJECT_DIR, brands_to_extract
 from crm_pipeline.dbt_env import build_args, dbt_environment
 
@@ -61,6 +62,13 @@ dbt_resource = DbtCliResource(
 )
 
 
+# The asset group each dbt source is loaded in: its job's selection
+SOURCE_GROUPS = {"crm": "bronze", "web": "lakehouse"}
+# Tables of those schemas that a side load writes, not the schema's own job: RAW.CRM.ORDERS_CDC is
+# the change data capture's
+SIDE_LOAD_SOURCES = {("crm", "orders_cdc")}
+
+
 class CrmDbtTranslator(DagsterDbtTranslator):
     """Bronze tables are the dbt sources; every model keeps its dbt name as its asset key."""
 
@@ -75,7 +83,11 @@ class CrmDbtTranslator(DagsterDbtTranslator):
 
     def get_group_name(self, dbt_resource_props):
         if dbt_resource_props.get("resource_type") == "source":
-            return "bronze" if dbt_resource_props["source_name"] == "crm" else "lakehouse"
+            # RAW.CRM is loaded by the report job, RAW.WEB by the clickstream job, and anything
+            # else (RAW.REF, and the tables of SIDE_LOAD_SOURCES) by the side loads job
+            if (dbt_resource_props["source_name"], dbt_resource_props["name"]) in SIDE_LOAD_SOURCES:
+                return "crm_side_loads"
+            return SOURCE_GROUPS.get(dbt_resource_props["source_name"], "crm_side_loads")
         return "dbt"
 
 
@@ -95,6 +107,9 @@ def crm_dbt_assets(context, dbt: DbtCliResource):
     # data) do not get fresher with time. It runs without the context: with it, dagster-dbt adds
     # `--select fqn:*`, which matches no source, so dbt checks nothing and passes. raise_on_error
     # is off so that the Failure below, without a retry, is what stops the step.
+    # First of all, the side loads' tables: they are sources of dbt, and their job is not part of
+    # this one, so a side load that has never run must leave an empty table, not a missing one.
+    raw_tables.ensure_side_tables()
     if brands_to_extract():
         freshness = dbt.cli(["source", "freshness"], target_path=DBT_TARGET_PATH / "source_freshness",
                             raise_on_error=False).wait()

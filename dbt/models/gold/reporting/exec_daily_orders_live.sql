@@ -9,14 +9,15 @@
     the cost of the order (revenue_usd and contribution_margin_usd in exec_daily_brand_metrics
     subtract them).
 #}
+-- Each column is cast to its contract type (_reporting.yml)
 select
-    l.brand,
-    b.brand_name,
-    l.date_day,
-    l.orders,
-    l.paid_orders,
-    l.new_subscriptions,
-    l.renewals,
+    l.brand::varchar                                                    as brand,
+    b.brand_name::varchar                                               as brand_name,
+    l.date_day::date                                                    as date_day,
+    l.orders::int                                                       as orders,
+    l.paid_orders::int                                                  as paid_orders,
+    l.new_subscriptions::int                                            as new_subscriptions,
+    l.renewals::int                                                     as renewals,
     round({{ amount_excl_vat('l.paid_total_cents', 'b') }} * b.usd_rate, 2)::number(18, 2)
                                                                         as sales_usd
 from {{ ref('fct_daily_orders_live') }} as l

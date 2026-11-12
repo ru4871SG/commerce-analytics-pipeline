@@ -90,13 +90,17 @@ def fingerprint(cursor) -> dict:
             "where table_schema = 'GOLD' and table_name = %s order by ordinal_position",
             (table,),
         )
-        numeric = [name for name, data_type in cursor.fetchall() if data_type.upper() in ("NUMBER", "FLOAT", "DECIMAL")]
-        sums = ", ".join(f'sum("{column}") as "{column}"' for column in numeric) or "null as \"_none\""
+        columns = cursor.fetchall()
+        numeric = [name for name, data_type in columns if data_type.upper() in ("NUMBER", "FLOAT", "DECIMAL")]
+        # A flag has no sum, but how many rows carry it changes when a rule does (is_anomaly)
+        flags = [name for name, data_type in columns if data_type.upper() == "BOOLEAN"]
+        sums = ", ".join([f'sum("{column}") as "{column}"' for column in numeric]
+                         + [f'sum(iff("{column}", 1, 0)) as "{column}"' for column in flags]) or "null as \"_none\""
         cursor.execute(f'select count(*), {sums} from ANALYTICS.GOLD."{table}"')
         row = cursor.fetchone()
         result[table.lower()] = {
             "rows": int(row[0]),
-            "sums": {column.lower(): plain(value) for column, value in zip(numeric, row[1:])},
+            "sums": {column.lower(): plain(value) for column, value in zip(numeric + flags, row[1:])},
         }
     return result
 

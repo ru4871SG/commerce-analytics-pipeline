@@ -22,20 +22,23 @@ from dagster_crm.retries import DEFAULT_RETRY, NO_RETRY
 @asset(
     key="executive_digest",
     group_name="activation",
-    deps=[AssetKey("exec_kpi_snapshot"), AssetKey("exec_channel_cac_ltv")],
+    deps=[AssetKey("exec_kpi_snapshot"), AssetKey("exec_channel_cac_ltv"), AssetKey("exec_kpi_anomalies")],
     retry_policy=DEFAULT_RETRY,
-    description="Read the KPI cards and channel CAC/LTV from gold; post the digest to Slack.",
+    description="Read the KPI cards, channel CAC/LTV and the as-of day's unusual numbers from gold; "
+                "post the digest to Slack.",
 )
 def executive_digest(context, warehouse: SnowflakeWarehouse) -> MaterializeResult:
     with warehouse.session() as connection:
         gold = digest.read_gold(connection.cursor())
     executive = digest.build_digest(gold)
     published = post_to_slack(digest.digest_message(executive))
-    context.log.info("Executive digest for %s: %s alert(s), %s.", executive["as_of_date"],
-                     len(executive["alerts"]), "posted to Slack" if published else "logged only")
+    context.log.info("Executive digest for %s: %s unusual number(s), %s alert(s), %s.", executive["as_of_date"],
+                     len(executive["anomalies"]), len(executive["alerts"]),
+                     "posted to Slack" if published else "logged only")
     return MaterializeResult(
         metadata={
             "as_of_date": executive["as_of_date"] or "",
+            "anomalies": len(executive["anomalies"]),
             "alerts": len(executive["alerts"]),
             "posted_to_slack": published,
         }

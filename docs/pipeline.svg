@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 846" width="980" height="846" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1216 846" width="1216" height="846" role="img" aria-labelledby="title desc">
   <title id="title">The end-to-end pipeline</title>
-  <desc id="desc">Two paths run side by side through the medallion layers. A demo-only simulator writes each day's shop activity. The CRM: PostgreSQL, a Python loader, Snowflake bronze (RAW.CRM and its change log), silver and gold built by dbt; dbt also reads the orders' change log for the order history, and the Live tiles' dynamic table reads Snowflake bronze directly. The storefront clickstream: export files land in a volume, a gate sends each batch to pandas in the worker or to a Spark job on Databricks, both build the same Delta bronze, silver and gold, and the gold funnel is copied into Snowflake bronze (RAW.WEB), where dbt reads it into silver and joins it with the CRM. Superset reads Snowflake gold.</desc>
+  <desc id="desc">Three paths run side by side through the medallion layers. A demo-only simulator writes each day's shop activity. The CRM: PostgreSQL, a Python loader, Snowflake bronze (RAW.CRM and its change log), silver and gold built by dbt; dbt also reads the orders' change log for the order history, and the Live tiles' dynamic table reads Snowflake bronze directly. Beside the loader, a change data capture reads the write-ahead log of the same PostgreSQL through a wal2json replication slot per brand database: every insert, update and delete of the orders table is appended to Snowflake bronze (RAW.CRM.ORDERS_CDC), which dbt reads into silver and into the gold table of order change events. It is a side load: dbt does not wait for it, and it never writes the loader's tables. The storefront clickstream: export files land in a volume, a gate sends each batch to pandas in the worker or to a Spark job on Databricks, both build the same Delta bronze, silver and gold, and the gold funnel is copied into Snowflake bronze (RAW.WEB), where dbt reads it into silver and joins it with the CRM. The exchange rates: the European Central Bank's public REST API, a Python step that loads only the days after the latest rate it has, Snowflake bronze (RAW.REF.FX_RATES), a dbt silver model that puts them after the history kept as a dbt seed and gives every calendar day a rate, and a gold table of revenue at the rates of the day. That step is a side load: dbt does not wait for it, and it skips without its connection. Its silver and gold models are in the same ANALYTICS schemas as the CRM's. Superset reads Snowflake gold.</desc>
   <style>
     svg { --bg: #ffffff; --line: #d0d7de; --text: #1f2328; --muted: #59636e; --arrow: #57606a;
           --src-fill: #f6f8fa; --src: #8c959f; --step-fill: #f5f0ff; --step: #8250df;
@@ -41,22 +41,23 @@
     </marker>
   </defs>
 
-  <rect class="card" x="0.5" y="0.5" width="979" height="845" rx="12"/>
+  <rect class="card" x="0.5" y="0.5" width="1215" height="845" rx="12"/>
 
   <!-- lanes and rows -->
   <text class="lane" x="120" y="38">CRM · relational, transactional</text>
   <text class="lane" x="500" y="38">Storefront clickstream · semi-structured event files</text>
+  <text class="lane" x="980" y="38">Exchange rates · REST API</text>
   <text class="row" x="32" y="139">SOURCE</text>
   <text class="row" x="32" y="305">INGEST</text>
   <text class="row" x="32" y="473">BRONZE</text>
   <text class="row" x="32" y="571">SILVER</text>
   <text class="row" x="32" y="669">GOLD</text>
   <text class="row" x="32" y="789">SERVE</text>
-  <line class="divider" x1="24" y1="192" x2="956" y2="192"/>
-  <line class="divider" x1="24" y1="418" x2="956" y2="418"/>
-  <line class="divider" x1="24" y1="518" x2="956" y2="518"/>
-  <line class="divider" x1="24" y1="616" x2="956" y2="616"/>
-  <line class="divider" x1="24" y1="738" x2="956" y2="738"/>
+  <line class="divider" x1="24" y1="192" x2="1192" y2="192"/>
+  <line class="divider" x1="24" y1="418" x2="1192" y2="418"/>
+  <line class="divider" x1="24" y1="518" x2="1192" y2="518"/>
+  <line class="divider" x1="24" y1="616" x2="1192" y2="616"/>
+  <line class="divider" x1="24" y1="738" x2="1192" y2="738"/>
 
   <!-- demo simulator -->
   <rect class="demo" x="120" y="52" width="828" height="28" rx="14"/>
@@ -82,8 +83,24 @@
   <text class="detail" x="134" y="251">one read-only snapshot per brand; reference tables whole</text>
   <text class="detail" x="134" y="269">INSERTs for small batches; write_pandas for bulk loads</text>
   <text class="detail mono" x="134" y="287">ingest_&lt;brand&gt; · bronze_loader.py</text>
-  <text class="label" x="210" y="322">No Spark here: direct warehouse loading handles</text>
-  <text class="label" x="210" y="338">incremental relational updates without a cluster.</text>
+  <text class="label" x="298" y="320">No Spark here: direct</text>
+  <text class="label" x="298" y="334">warehouse loading handles</text>
+  <text class="label" x="298" y="348">incremental relational</text>
+  <text class="label" x="298" y="362">updates without a cluster.</text>
+
+  <!-- INGEST: the change data capture of orders, beside the loader. A side load: its bronze table
+       is drawn here, under its step, and reaches silver along the lane's left edge -->
+  <path class="flow" d="M120 150 H106 V335 H118" marker-end="url(#arrow)"/>
+  <text class="label" transform="translate(101 256) rotate(-90)" text-anchor="middle">write-ahead log</text>
+  <rect class="step" x="120" y="312" width="158" height="46" rx="8"/>
+  <text class="name" x="132" y="331">CDC · wal2json</text>
+  <text class="detail" x="132" y="348">orders: every change</text>
+  <path class="flow" d="M199 358 V368" marker-end="url(#arrow)"/>
+  <rect class="sf" x="120" y="370" width="158" height="44" rx="8"/>
+  <text class="name mono" x="132" y="389">ORDERS_CDC</text>
+  <text class="detail" x="132" y="405">RAW.CRM, append-only</text>
+  <path class="flow" d="M120 392 H106 V567 H118" marker-end="url(#arrow)"/>
+  <text class="label" transform="translate(101 470) rotate(-90)" text-anchor="middle">dbt</text>
 
   <!-- INGEST: clickstream -->
   <path class="flow" d="M600 172 V206" marker-end="url(#arrow)"/>
@@ -113,9 +130,9 @@
   <text class="detail" x="746" y="379">large backlogs and historical backfills</text>
 
   <!-- BRONZE -->
-  <text class="tag tag-sf" x="290" y="432" text-anchor="middle">SNOWFLAKE BRONZE</text>
+  <text class="tag tag-sf" x="368" y="432" text-anchor="middle">SNOWFLAKE BRONZE</text>
   <text class="tag tag-dl" x="724" y="432" text-anchor="middle">DELTA BRONZE</text>
-  <path class="flow" d="M195 300 V436" marker-end="url(#arrow)"/>
+  <path class="flow" d="M288 300 V436" marker-end="url(#arrow)"/>
   <path class="flow" d="M448 300 V436" marker-end="url(#arrow)"/>
   <text class="label" x="442" y="382" text-anchor="end">reference tables,</text>
   <text class="label" x="442" y="396" text-anchor="end">copied whole</text>
@@ -176,6 +193,41 @@
   <text class="detail" x="512" y="689">(RAW database)</text>
   <path class="flow" d="M500 653 H480 V567 H462" marker-end="url(#arrow)"/>
   <text class="label" x="487" y="611">dbt: <tspan class="mono">stg_web__daily_funnel</tspan></text>
+
+  <!-- EXCHANGE RATES: a side load, from the API to gold -->
+  <rect class="src" x="980" y="98" width="212" height="74" rx="8"/>
+  <text class="name" x="994" y="121">ECB Data Portal API</text>
+  <text class="detail" x="994" y="141">euro reference rates, daily</text>
+  <text class="detail" x="994" y="159">USD, GBP</text>
+
+  <path class="flow" d="M1086 172 V206" marker-end="url(#arrow)"/>
+  <rect class="step" x="980" y="208" width="212" height="92" rx="8"/>
+  <text class="name" x="994" y="231">Load new days · Python</text>
+  <text class="detail" x="994" y="251">days after the latest rate only</text>
+  <text class="detail" x="994" y="269">3 tries, then the step fails</text>
+  <text class="detail mono" x="994" y="287">side_loads.load_fx_rates</text>
+  <text class="label" x="980" y="322">A side load: dbt does not wait</text>
+  <text class="label" x="980" y="338">for it. No connection: it skips.</text>
+
+  <text class="tag tag-sf" x="1066" y="432" text-anchor="middle">SNOWFLAKE BRONZE</text>
+  <path class="flow" d="M1170 300 V436" marker-end="url(#arrow)"/>
+  <rect class="sf" x="980" y="438" width="212" height="62" rx="8"/>
+  <text class="name mono" x="994" y="463">RAW.REF.FX_RATES</text>
+  <text class="detail" x="994" y="483">rates per euro, append-only</text>
+
+  <text class="tag tag-sf" x="1066" y="530" text-anchor="middle">SNOWFLAKE SILVER</text>
+  <path class="flow" d="M1170 500 V534" marker-end="url(#arrow)"/>
+  <rect class="sf" x="980" y="536" width="212" height="62" rx="8"/>
+  <text class="name" x="994" y="561"><tspan class="mono">int_fx_rates_daily</tspan> · dbt</text>
+  <text class="detail" x="994" y="581">seed and load, a rate per day</text>
+
+  <text class="tag tag-sf" x="1066" y="628" text-anchor="middle">SNOWFLAKE GOLD</text>
+  <path class="flow" d="M1170 598 V632" marker-end="url(#arrow)"/>
+  <rect class="sf" x="980" y="634" width="212" height="62" rx="8"/>
+  <text class="name" x="994" y="659"><tspan class="mono">exec_fx_impact</tspan> · dbt</text>
+  <text class="detail" x="994" y="679">revenue at each day's rate</text>
+  <text class="label" x="980" y="714">In ANALYTICS, with the CRM's models:</text>
+  <text class="label" x="980" y="728">orders get the rate of their day.</text>
 
   <!-- SERVE -->
   <path class="flow" d="M290 710 V750" marker-end="url(#arrow)"/>

@@ -30,6 +30,15 @@ sources:
           this table keeps the history.
         config:
           freshness: null # loaded with orders, whose freshness is checked
+      - name: orders_cdc
+        description: >
+          Append-only: every insert, update and delete of an order since its brand's replication
+          slot exists, read from PostgreSQL's write-ahead log by wal2json
+        config:
+          # A side load, and optional: it skips without its connection, and a failed capture must
+          # not stop the report. A capture that fell behind shows as the slot's lag
+          # (scripts/local.sh status) and in the test that holds it against orders_changes.
+          freshness: null
       - name: order_items
         description: One row per order line, linked to its order and product variant.
       - name: refund_payments
@@ -85,3 +94,18 @@ sources:
           and what the engine did (rows loaded, rows each rule dropped, days rebuilt).
         config:
           freshness: null # loaded with daily_funnel
+
+  - name: ref
+    description: >
+      Reference data loaded beside the CRM by the side loads: steps of the Airflow DAG or of the
+      Dagster job crm_side_loads that feed dbt and that the report never waits for.
+    database: "{{ env_var('BRONZE_DATABASE', 'RAW') }}"
+    schema: ref
+    tables:
+      - name: fx_rates
+        description: >
+          The ECB's euro foreign exchange reference rates for the days after the seed
+          fx_rates_ecb ends: one row per currency and day a rate was published, units of the
+          currency per euro. Append-only.
+        config:
+          freshness: null

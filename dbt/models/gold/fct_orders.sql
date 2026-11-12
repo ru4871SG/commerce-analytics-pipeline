@@ -9,6 +9,8 @@
     issued. That is the view of an order or a customer (LTV, cohorts). Reports over a period take
     refunds on the day they were issued instead (fct_refunds). The *_usd columns convert these at the
     brand's constant-currency rate (seeds/fx_rates.csv), so brands in different currencies add up.
+    usd_rate_actual and gross_sales_usd_actual use the ECB's rate of the order's own day instead
+    (int_fx_rates_daily): what the order was worth in dollars when it was placed.
 #}
 with orders as (
 
@@ -123,6 +125,9 @@ enriched as (
         -- From the cents, not rounded to the cent per order: the same prices repeat, so what each
         -- order would lose to rounding adds up over a month
         ({{ amount_excl_vat('r.total_cents', 'r') }} * r.usd_rate)::number(18, 6)  as gross_sales_usd,
+        -- At the rate of the order's day. NULL when no rate was published on or before it
+        ({{ amount_excl_vat('r.total_cents', 'r') }} * fx.usd_per_unit)::number(18, 6)
+                                                                                   as gross_sales_usd_actual,
         round(
             (iff(r.prices_include_vat, r.total_cents / (1 + r.vat_rate), r.total_cents)
                 - coalesce(c.cost_of_order_cents, 0)) / 100,
@@ -180,6 +185,7 @@ enriched as (
         fi.first_item_warehouse_sku,
         r.is_created_by_admin,
         r.usd_rate,
+        fx.usd_per_unit::number(18, 6)                                             as usd_rate_actual,
         r.customer_first_order_date,
         datediff(day, r.customer_first_order_date, r.order_date)                   as days_since_customer_first_order,
         floor(datediff(day, r.customer_first_order_date, r.order_date) / 30)::int  as cohort_number
@@ -190,6 +196,8 @@ enriched as (
         on r.brand = fi.brand and r.order_id = fi.order_id
     left join refunds as rf
         on r.brand = rf.brand and r.order_number = rf.order_number
+    left join {{ ref('int_fx_rates_daily') }} as fx
+        on upper(r.currency_code) = fx.currency_code and r.order_date = fx.date_day
 
 )
 

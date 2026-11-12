@@ -18,38 +18,22 @@ exits with 3: there is no default password, since install generates a random one
 """
 from __future__ import annotations
 
-import ipaddress
 import json
 import os
 import sys
 from pathlib import Path
-from urllib.parse import urlsplit
 
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from build_bundle import CHARTS, DATASETS, SLUG  # noqa: E402
+from safe_url import sends_password_in_clear  # noqa: E402
 
 BASE_URL = os.environ.get("SUPERSET_URL", "http://127.0.0.1:8088").rstrip("/")
 NOT_RUNNING = 99
 INSECURE_URL = 2
 LOGIN_FAILED = 3
 DATASET_BY_UUID = {definition["uuid"]: name for name, definition in DATASETS.items()}
-
-
-def sends_password_in_clear(url: str) -> bool:
-    """Whether logging in at this URL would send the password unencrypted over a network:
-    plain http to a host other than this machine."""
-    parts = urlsplit(url)
-    if parts.scheme != "http":
-        return False
-    host = parts.hostname or ""
-    if host == "localhost":
-        return False
-    try:
-        return not ipaddress.ip_address(host).is_loopback
-    except ValueError:            # a host name: it may resolve anywhere
-        return True
 
 
 def query_for(spec: dict) -> dict:
@@ -69,6 +53,9 @@ def query_for(spec: dict) -> dict:
     elif viz == "pivot_table_v2":
         columns = list(params.get("groupbyRows", [])) + list(params.get("groupbyColumns", []))
         metrics = list(params["metrics"])
+    elif viz == "table" and params.get("query_mode") == "raw":      # the rows as they are stored
+        columns = list(params["all_columns"])
+        metrics = []
     elif viz == "mixed_timeseries":
         columns = list(params.get("groupby", []))
         metrics = list(params["metrics"]) + list(params["metrics_b"])
@@ -78,11 +65,14 @@ def query_for(spec: dict) -> dict:
         columns = list(params.get("groupby", []))
         metrics = list(params.get("metrics", []))
         x_axis = params.get("x_axis")
-        if x_axis in ("date_day", "week_start"):
+        if x_axis in ("date_day", "week_start", "month_start"):
             granularity = x_axis
             is_timeseries = True
         elif x_axis:
             columns.append(x_axis)
+    # The chart's own filter is part of what it shows: a table of the as-of day must find that day
+    where = " AND ".join(f"({item['sqlExpression']})" for item in params.get("adhoc_filters", [])
+                         if item.get("clause") == "WHERE" and item.get("expressionType") == "SQL")
     return {
         "columns": columns,
         "metrics": metrics,
@@ -90,8 +80,8 @@ def query_for(spec: dict) -> dict:
         "is_timeseries": is_timeseries,
         "time_range": "No filter",
         "row_limit": 500,
-        "orderby": [],
-        "extras": {},
+        "orderby": [json.loads(item) for item in params.get("order_by_cols", [])],
+        "extras": {"where": where} if where else {},
     }
 
 
@@ -225,7 +215,7 @@ def main() -> int:
             if not one < every:
                 failures.append(f"{card}: Broomx alone ({one}) is not less than every brand ({every})")
     if len(failures) == failures_before:
-        print(f"  ok  every chart filtered to one brand returns only that brand")
+        print("  ok  every chart filtered to one brand returns only that brand")
 
     if failures:
         print("\nFAILURES")

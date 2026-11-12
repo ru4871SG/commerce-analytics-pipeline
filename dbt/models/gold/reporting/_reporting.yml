@@ -12,12 +12,36 @@ models:
           arguments:
             combination_of_columns: [brand, date_day]
     columns:
+      - name: brand
+        data_type: varchar
       - name: brand_name
+        data_type: varchar
         description: Brand as shown in the dashboard. The dashboard's brand filter uses this column.
         data_tests:
           - not_null
+      - name: date_day
+        data_type: date
+      - name: gross_sales_usd
+        data_type: float
+      - name: refunds_usd
+        data_type: float
+      - name: revenue_usd
+        data_type: float
+      - name: contribution_margin_usd
+        data_type: float
+      - name: revenue_orders
+        data_type: int
+      - name: new_customers
+        data_type: int
+      - name: new_subscriptions
+        data_type: int
       - name: canceled_subscriptions
+        data_type: int
         description: Subscriptions cancelled that day, as a negative number so bars point down.
+      - name: net_subscriptions
+        data_type: int
+      - name: ad_spend_usd
+        data_type: float
 
   - name: exec_active_subscriptions_weekly
     description: >
@@ -28,7 +52,16 @@ models:
           arguments:
             combination_of_columns: [brand, week_start]
     columns:
+      - name: brand
+        data_type: varchar
+      - name: brand_name
+        data_type: varchar
+      - name: week_start
+        data_type: date
+      - name: snapshot_date
+        data_type: date
       - name: active_subscriptions
+        data_type: int
         data_tests:
           - dbt_utils.accepted_range:
               arguments:
@@ -43,12 +76,25 @@ models:
           arguments:
             combination_of_columns: [brand, day_offset]
     columns:
+      - name: brand
+        data_type: varchar
+      - name: brand_name
+        data_type: varchar
+      - name: day_offset
+        data_type: int
+      - name: subscriptions
+        data_type: int
+      - name: active_subscriptions
+        data_type: int
       - name: subscribers_left_rate
+        data_type: float
         data_tests:
           - dbt_utils.accepted_range:
               arguments:
                 min_value: 0
                 max_value: 1
+      - name: canceled_rate
+        data_type: float
 
   - name: exec_rebuy_curve
     description: >
@@ -59,7 +105,18 @@ models:
           arguments:
             combination_of_columns: [brand, day_offset]
     columns:
+      - name: brand
+        data_type: varchar
+      - name: brand_name
+        data_type: varchar
+      - name: day_offset
+        data_type: int
+      - name: rebuyers
+        data_type: int
+      - name: customers
+        data_type: int
       - name: rebuy_rate
+        data_type: float
         data_tests:
           - dbt_utils.accepted_range:
               arguments:
@@ -76,6 +133,23 @@ models:
       - dbt_utils.unique_combination_of_columns:
           arguments:
             combination_of_columns: [brand, first_order_month, cohort_number]
+    columns:
+      - name: brand
+        data_type: varchar
+      - name: brand_name
+        data_type: varchar
+      - name: first_order_month
+        data_type: date
+      - name: cohort_number
+        data_type: int
+      - name: new_customers
+        data_type: int
+      - name: period_contribution_margin_usd
+        data_type: float
+      - name: cumulative_contribution_margin_usd
+        data_type: float
+      - name: contribution_margin_per_customer_usd
+        data_type: float
 
   - name: exec_daily_orders_live
     description: >
@@ -89,7 +163,22 @@ models:
           arguments:
             combination_of_columns: [brand, date_day]
     columns:
+      - name: brand
+        data_type: varchar
+      - name: brand_name
+        data_type: varchar
+      - name: date_day
+        data_type: date
+      - name: orders
+        data_type: int
+      - name: paid_orders
+        data_type: int
+      - name: new_subscriptions
+        data_type: int
+      - name: renewals
+        data_type: int
       - name: sales_usd
+        data_type: number(18, 2)
         data_tests: [not_null]
 
   - name: exec_kpi_snapshot
@@ -101,37 +190,94 @@ models:
       rates.
     columns:
       - name: brand
+        data_type: varchar
         data_tests: [unique, not_null]
+      - name: brand_name
+        data_type: varchar
+      - name: as_of_date
+        data_type: date
       - name: revenue_mtd_usd
+        data_type: float
         description: Order totals without VAT, first of the month to the as-of date, minus the refunds issued in those days. Before the cost of the orders.
       - name: contribution_margin_mtd_usd
+        data_type: float
         description: Revenue minus the cost of those orders. Before ad spend.
+      - name: revenue_pmtd_usd
+        data_type: float
+      - name: contribution_margin_pmtd_usd
+        data_type: float
+      - name: revenue_ytd_usd
+        data_type: float
+      - name: contribution_margin_ytd_usd
+        data_type: float
+      - name: revenue_pytd_usd
+        data_type: float
+      - name: contribution_margin_pytd_usd
+        data_type: float
+      - name: new_customers_mtd
+        data_type: int
+      - name: new_customers_pmtd
+        data_type: int
+      - name: new_customers_l30d
+        data_type: int
+      - name: new_customers_l60d
+        data_type: int
+      - name: new_customers_l90d
+        data_type: int
+      - name: net_subscriptions_l30d
+        data_type: int
+      - name: net_subscriptions_l60d
+        data_type: int
+      - name: net_subscriptions_l90d
+        data_type: int
+      - name: net_subscriptions_l180d
+        data_type: int
+      - name: active_subscriptions_start_l30d
+        data_type: int
+      - name: lost_subscriptions_l30d
+        data_type: int
       - name: churn_rate_l30d
+        data_type: float
         description: Subscriptions lost in the last 30 days / those active 30 days ago.
         data_tests:
           - dbt_utils.accepted_range:
               arguments:
                 min_value: 0
                 max_value: 1
+      - name: active_subscriptions_start_l60d
+        data_type: int
+      - name: lost_subscriptions_l60d
+        data_type: int
       - name: churn_rate_l60d
+        data_type: float
         data_tests:
           - dbt_utils.accepted_range:
               arguments:
                 min_value: 0
                 max_value: 1
+      - name: active_subscriptions_start_l90d
+        data_type: int
+      - name: lost_subscriptions_l90d
+        data_type: int
       - name: churn_rate_l90d
+        data_type: float
         data_tests:
           - dbt_utils.accepted_range:
               arguments:
                 min_value: 0
                 max_value: 1
       - name: canceled_within_30d_rate
+        data_type: float
         description: Of the first subscriptions at least 30 days old, the share cancelled within 30 days of starting.
         data_tests:
           - dbt_utils.accepted_range:
               arguments:
                 min_value: 0
                 max_value: 1
+      - name: canceled_within_60d_rate
+        data_type: float
+      - name: canceled_within_90d_rate
+        data_type: float
 
   - name: exec_channel_cac_ltv
     description: >
@@ -143,20 +289,43 @@ models:
           arguments:
             combination_of_columns: [brand, channel]
     columns:
+      - name: brand
+        data_type: varchar
       - name: brand_name
+        data_type: varchar
         data_tests: [not_null]
+      - name: channel
+        data_type: varchar
+      - name: acquisition_window_start
+        data_type: date
+      - name: acquisition_window_end
+        data_type: date
+      - name: spend_usd
+        data_type: float
+      - name: impressions
+        data_type: int
+      - name: clicks
+        data_type: int
       - name: acquired_customers
+        data_type: int
         data_tests:
           - not_null
           - dbt_utils.accepted_range:
               arguments:
                 min_value: 0
+      - name: contribution_margin_90d_usd
+        data_type: float
       - name: cac_usd
+        data_type: number(18, 2)
         description: Ad spend per customer acquired. NULL for organic.
         data_tests:
           - dbt_utils.accepted_range:
               arguments:
                 min_value: 0
+      - name: ltv_90d_usd
+        data_type: number(18, 2)
+      - name: ltv_to_cac_ratio
+        data_type: number(18, 3)
 
   - name: exec_web_daily_sessions
     description: >
@@ -168,15 +337,37 @@ models:
           arguments:
             combination_of_columns: [brand, date_day, channel]
     columns:
+      - name: brand
+        data_type: varchar
       - name: brand_name
+        data_type: varchar
         data_tests:
           - not_null
+      - name: date_day
+        data_type: date
+      - name: channel
+        data_type: varchar
+      - name: sessions
+        data_type: int
+      - name: engaged_sessions
+        data_type: int
+      - name: view_item_sessions
+        data_type: int
+      - name: add_to_cart_sessions
+        data_type: int
+      - name: checkout_sessions
+        data_type: int
       - name: purchase_sessions
+        data_type: int
         description: Sessions that ended in a purchase; never more than the sessions.
         data_tests:
           - dbt_utils.expression_is_true:
               arguments:
                 expression: "<= sessions"
+      - name: purchases
+        data_type: int
+      - name: ad_spend_usd
+        data_type: float
 
   - name: exec_web_channel_funnel
     description: >
@@ -187,21 +378,492 @@ models:
           arguments:
             combination_of_columns: [brand, channel]
     columns:
+      - name: brand
+        data_type: varchar
       - name: brand_name
+        data_type: varchar
         data_tests:
           - not_null
-      - name: conversion_rate
-        data_tests:
-          - dbt_utils.accepted_range:
-              arguments:
-                min_value: 0
-                max_value: 1
+      - name: channel
+        data_type: varchar
+      - name: window_start
+        data_type: date
+      - name: window_end
+        data_type: date
+      - name: sessions
+        data_type: int
+      - name: purchases
+        data_type: int
+      - name: ad_spend_usd
+        data_type: float
       - name: engaged_rate
+        data_type: number(18, 4)
         data_tests:
           - dbt_utils.accepted_range:
               arguments:
                 min_value: 0
                 max_value: 1
+      - name: view_item_rate
+        data_type: number(18, 4)
+      - name: add_to_cart_rate
+        data_type: number(18, 4)
+      - name: checkout_rate
+        data_type: number(18, 4)
+      - name: conversion_rate
+        data_type: number(18, 4)
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: cost_per_session_usd
+        data_type: number(18, 2)
+      - name: cost_per_purchase_usd
+        data_type: number(18, 2)
+
+  - name: exec_kpi_anomalies
+    description: >
+      One row per brand, metric and day of the trailing 90 days: the day's value, the usual value
+      for that brand on that weekday (the median of the same weekday in the eight weeks before),
+      how far the day is from it in robust z-scores, and whether that is unusual. Seven metrics of
+      exec_daily_brand_metrics, cancellations as a positive number. Superset: a table of the
+      as-of day (is_as_of_day) with every metric, flagged or not. The digest leads with the rows
+      where is_as_of_day and is_anomaly. The rule's numbers are dbt vars (dbt_project.yml).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, metric, date_day]
+      # Too few earlier weeks make no baseline: such a day is never an anomaly
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "not (is_anomaly and comparison_days < {{ var('anomaly_min_comparison_days') }})"
+    columns:
+      - name: brand
+        data_type: varchar
+      - name: brand_name
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: date_day
+        data_type: date
+      - name: metric
+        data_type: varchar
+        description: The column of exec_daily_brand_metrics the row is about.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values:
+                  [
+                    revenue_usd,
+                    contribution_margin_usd,
+                    revenue_orders,
+                    new_customers,
+                    new_subscriptions,
+                    canceled_subscriptions,
+                    ad_spend_usd,
+                  ]
+      - name: value
+        data_type: float
+        description: The metric on that day. Cancellations are positive here.
+        data_tests:
+          - not_null
+      - name: baseline_median
+        data_type: float
+        description: The usual value, the median of the same weekday in the weeks before. Null when the data has no earlier week.
+      - name: spread
+        data_type: float
+        description: 1.4826 x the median distance of the earlier values from their median. Zero when most of them are equal.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: robust_z
+        data_type: number(18, 2)
+        description: (value - baseline_median) / spread. Null when the spread is zero or there is no baseline.
+      - name: direction
+        data_type: varchar
+        description: Whether the value is above or below the usual one. Null when they are equal or there is no baseline.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [above, below]
+      - name: is_anomaly
+        data_type: boolean
+        description: The day is unusual for this brand, metric and weekday.
+        data_tests:
+          - not_null
+      - name: is_as_of_day
+        data_type: boolean
+        description: The row is the as-of date's, the one the dashboard's table and the digest read.
+        data_tests:
+          - not_null
+      - name: comparison_days
+        data_type: int
+        description: How many earlier same-weekdays the baseline is made of, 0 to 8.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: "{{ var('anomaly_comparison_weeks') }}"
+
+  - name: exec_product_performance
+    description: >
+      Which products make the margin: one row per brand, month, product and purchase type, for
+      the lines of revenue orders placed in that month. Every product of the brand's catalogue
+      has a row in every month, with zeros when it did not sell. Shipping charged and discounts
+      on the whole order are not spread over the lines, the first line of an order carries the
+      order's fixed costs, and a product with no cost SKU costs nothing. Superset: margin by
+      product (bars, x = product_name, SUM(line_margin_usd), dimension purchase_type) and units
+      by product and month (bars, time grain Month, SUM(units), dimension product_name).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              [brand, month_start, product_name, purchase_type]
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "units_in_refunded_orders <= units"
+    columns:
+      - name: brand
+        data_type: varchar
+      - name: brand_name
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: month_start
+        data_type: date
+        description: First day of the month the orders were placed in.
+        data_tests:
+          - not_null
+      - name: product_name
+        data_type: varchar
+        description: The product's name in the catalogue (dim_products).
+        data_tests:
+          - not_null
+      - name: purchase_type
+        data_type: varchar
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["Subscribe", "Upsell", "One-Time Purchase"]
+      - name: units
+        data_type: int
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: line_revenue_usd
+        data_type: float
+        description: The lines' own totals, VAT removed. Without shipping charged and order discounts.
+      - name: line_cost_usd
+        data_type: float
+        description: >
+          The lines' costs (fct_order_items.item_cost_cents). The first line of an order carries
+          the order's fixed costs; a product with no cost SKU costs nothing.
+      - name: line_margin_usd
+        data_type: float
+        description: line_revenue_usd minus line_cost_usd. Before refunds and ad spend.
+      - name: units_in_refunded_orders
+        data_type: int
+        description: >
+          Units in orders that had a completed refund, whenever it was issued: counted in the
+          month of the order, so an earlier month can grow.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+
+  - name: exec_refund_reasons
+    description: >
+      Why orders are refunded: one row per brand, month and refund reason, for the refunds that
+      come off revenue, in the month they were issued. Every reason has a row in every month,
+      with zeros when nothing was refunded for it. Superset: refund amount by reason and month
+      (bars, time grain Month, SUM(refund_amount_usd), dimension refund_reason) and average days
+      to refund by reason (bars, x = refund_reason, SUM(days_to_refund_sum) / SUM(refunds)).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, month_start, refund_reason]
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "refunds_requiring_return <= refunds"
+    columns:
+      - name: brand
+        data_type: varchar
+      - name: brand_name
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: month_start
+        data_type: date
+        description: First day of the month the refunds were issued in.
+        data_tests:
+          - not_null
+      - name: refund_reason
+        data_type: varchar
+        description: The reason on the refund; 'Not given' when it has none.
+        data_tests:
+          - not_null
+      - name: refunds
+        data_type: int
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: refund_amount_usd
+        data_type: float
+        description: What was refunded, VAT removed. Adds up to exec_daily_brand_metrics.refunds_usd.
+      - name: refunds_requiring_return
+        data_type: int
+        description: How many of the refunds needed the goods sent back.
+      - name: days_to_refund_sum
+        data_type: int
+        description: >
+          Days from the order's date to the refund's, summed over the refunds. Divide by refunds
+          for the average.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+
+  - name: exec_upsell_attach
+    description: >
+      How often a new customer takes the upsell: one row per brand and month, with the
+      customers' first orders placed in that month and how many of them have an upsell line.
+      A first order is the customer's earliest qualifying order, counted when it is a revenue
+      order and not a renewal. Superset: upsell attach rate by month (line, time grain Month,
+      SUM(first_orders_with_upsell) / SUM(first_orders)).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, month_start]
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "first_orders_with_upsell <= first_orders"
+    columns:
+      - name: brand
+        data_type: varchar
+      - name: brand_name
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: month_start
+        data_type: date
+        description: First day of the month the first orders were placed in.
+        data_tests:
+          - not_null
+      - name: first_orders
+        data_type: int
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: first_orders_with_upsell
+        data_type: int
+        description: First orders with at least one line whose purchase type is Upsell.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+
+  - name: exec_mrr_movements
+    description: >
+      What moved monthly recurring revenue (MRR): one row per brand, month and movement type,
+      with the MRR and the subscriptions that started in the month (new, or reactivated when the
+      customer came back after every earlier subscription had ended) and those that ended in it
+      (churned, negative). Every type has a row in every month, with zeros when nothing moved.
+      MRR is one unit of the subscription's line a month, VAT removed (dim_subscriptions.mrr_usd).
+      Superset: MRR movements by month (mixed chart, time grain Month: stacked bars SUM(mrr_usd)
+      by movement_type, and a line SUM(mrr_usd) over all types, the net change).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, month_start, movement_type]
+      # What started is never negative, and what was lost never positive
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "iff(movement_type = 'churned', mrr_usd <= 0 and subscriptions <= 0, mrr_usd >= 0 and subscriptions >= 0)"
+    columns:
+      - name: brand
+        data_type: varchar
+      - name: brand_name
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: month_start
+        data_type: date
+        description: First day of the month the subscriptions started in (new, reactivated) or ended in (churned).
+        data_tests:
+          - not_null
+      - name: movement_type
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["new", "reactivated", "churned"]
+      - name: mrr_usd
+        data_type: float
+        description: The MRR the movement added, or took away (churned is negative). The sum over the three types is the net change.
+        data_tests:
+          - not_null
+      - name: subscriptions
+        data_type: int
+        description: The subscriptions that moved it. Churned is negative.
+        data_tests:
+          - not_null
+
+  - name: exec_mrr_monthly
+    description: >
+      Monthly recurring revenue as a roll-forward: one row per brand and month, with the balance
+      the month opened with, what new and reactivated subscriptions added, what cancelled ones
+      took away (churned, positive here) and the balance it closed with, in USD and in
+      subscriptions. opening + new + reactivated - churned = closing, and a month opens where the
+      month before closed. Balances add up across brands, not across months. Superset: MRR by
+      month (line, time grain Month, SUM(closing_mrr_usd), dimension brand_name) and revenue
+      churn of the last complete month (Big Number with trend line over the complete months,
+      SUM(churned_mrr_usd) / SUM(opening_mrr_usd)).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, month_start]
+      # The paused part of a balance is a part of it
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "closing_paused_subscriptions between 0 and closing_subscriptions and closing_paused_mrr_usd between 0 and closing_mrr_usd + 0.005"
+    columns:
+      - name: brand
+        data_type: varchar
+      - name: brand_name
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: month_start
+        data_type: date
+        description: First day of the month.
+        data_tests:
+          - not_null
+      - name: opening_mrr_usd
+        data_type: float
+        description: The MRR of the subscriptions running when the month began. The closing balance of the month before; zero for the first month.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: new_mrr_usd
+        data_type: float
+        description: The MRR of the subscriptions that started in the month, from customers with no earlier subscription or with one still running.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: reactivated_mrr_usd
+        data_type: float
+        description: The MRR of the subscriptions that started in the month, from customers whose earlier subscriptions had all ended.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: churned_mrr_usd
+        data_type: float
+        description: The MRR of the subscriptions that ended in the month, as a positive number.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: closing_mrr_usd
+        data_type: float
+        description: The MRR of the subscriptions running at the end of the month; on the as-of date for the month that holds it.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: closing_paused_mrr_usd
+        data_type: float
+        description: The part of closing_mrr_usd from subscriptions the source flags as paused today. The flag has no date, and a paused subscription keeps renewing.
+      - name: opening_subscriptions
+        data_type: int
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: new_subscriptions
+        data_type: int
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: reactivated_subscriptions
+        data_type: int
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: churned_subscriptions
+        data_type: int
+        description: >
+          The subscriptions that ended in the month, as a positive number. One cancelled with no
+          date, or before it started, is new and churned in the month it started.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: closing_subscriptions
+        data_type: int
+        description: The subscriptions running at the end of the month. For the latest month, the latest exec_active_subscriptions_weekly.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: closing_paused_subscriptions
+        data_type: int
+      - name: is_complete_month
+        data_type: boolean
+        description: The month is over. Its last day is no later than the as-of date. Revenue churn is read from the latest complete month.
+        data_tests:
+          - not_null
+
+  - name: exec_fx_impact
+    description: >
+      What the exchange rate did to revenue: one row per brand and month, with revenue at the
+      constant (budget) rate the rest of the report uses, the same orders and refunds at the
+      ECB's rate of their own day, and the difference. An order is converted at the rate of the
+      day it was placed, a refund at the rate of the day it was issued. Every month has a row,
+      with zeros when nothing was sold. Superset: revenue by month at actual and at constant
+      rates (lines, time grain Month, SUM(revenue_usd_actual) and SUM(revenue_usd_constant)).
+      Source of the rates: ECB statistics.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, month_start]
+    columns:
+      - name: brand
+        data_type: varchar
+      - name: brand_name
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: month_start
+        data_type: date
+        description: First day of the month the orders were placed in and the refunds issued in.
+        data_tests:
+          - not_null
+      - name: revenue_usd_constant
+        data_type: float
+        description: Revenue at the brand's constant-currency rate. Adds up to exec_daily_brand_metrics.revenue_usd.
+        data_tests:
+          - not_null
+      - name: revenue_usd_actual
+        data_type: float
+        description: The same revenue at the ECB's rate of each order's and each refund's own day.
+        data_tests:
+          # The rates come from a side load: a month with none must show, not stop gold
+          - not_null:
+              config:
+                severity: warn
+      - name: fx_effect_usd
+        data_type: float
+        description: revenue_usd_actual minus revenue_usd_constant. What the exchange rate added or took. Zero for a brand that sells in USD.
 
 unit_tests:
   - name: survival_counts_a_subscription_until_it_is_cancelled_and_only_once_it_is_old_enough

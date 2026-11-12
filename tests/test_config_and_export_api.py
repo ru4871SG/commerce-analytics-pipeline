@@ -114,7 +114,7 @@ def test_a_missing_environment_connection_raises_connection_not_found(monkeypatc
 
 
 def test_permanent_error_is_an_airflow_fail_exception_under_airflow():
-    airflow = pytest.importorskip("airflow")
+    pytest.importorskip("airflow")
     from airflow.sdk.exceptions import AirflowFailException
 
     assert issubclass(PermanentError, AirflowFailException)

@@ -499,8 +499,6 @@ def build_brand(brand: dict, brand_index: int) -> dict[str, list[tuple]]:
     ]
     rows["processing_costs"] = [(1, brand["processing"][0], brand["processing"][1])]
 
-    one_time = [v for v in variants if v.purchase_type == "One-Time Purchase"]
-    vip = [v for v in variants if v.purchase_type == "Subscribe"]
     upsell = [v for v in variants if v.purchase_type == "Upsell"]
 
     # Customers -------------------------------------------------------------

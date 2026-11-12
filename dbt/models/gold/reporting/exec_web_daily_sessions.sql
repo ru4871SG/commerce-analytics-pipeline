@@ -30,19 +30,20 @@ spend as (
 
 )
 
+-- Each column is cast to its contract type (_reporting.yml)
 select
-    s.brand,
-    brands.brand_name,
-    s.date_day,
-    s.channel,
-    s.sessions,
-    s.engaged_sessions,
-    s.view_item_sessions,
-    s.add_to_cart_sessions,
-    s.checkout_sessions,
-    s.purchase_sessions,
-    s.purchases,
-    coalesce(sp.ad_spend_usd, 0)            as ad_spend_usd
+    s.brand::varchar                        as brand,
+    brands.brand_name::varchar              as brand_name,
+    s.date_day::date                        as date_day,
+    s.channel::varchar                      as channel,
+    s.sessions::int                         as sessions,
+    s.engaged_sessions::int                 as engaged_sessions,
+    s.view_item_sessions::int               as view_item_sessions,
+    s.add_to_cart_sessions::int             as add_to_cart_sessions,
+    s.checkout_sessions::int                as checkout_sessions,
+    s.purchase_sessions::int                as purchase_sessions,
+    s.purchases::int                        as purchases,
+    coalesce(sp.ad_spend_usd, 0)::float     as ad_spend_usd
 from sessions as s
 inner join {{ ref('brands') }} as brands
     on s.brand = brands.brand

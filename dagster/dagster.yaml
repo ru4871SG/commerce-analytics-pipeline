@@ -11,6 +11,10 @@ run_queue:
     - key: "crm/clickstream"
       value: "1"
       limit: 1
+    # The side loads too: each appends what its table lacks, and two runs at once could both add it.
+    - key: "crm/side_loads"
+      value: "1"
+      limit: 1
 
 run_monitoring:
   enabled: true

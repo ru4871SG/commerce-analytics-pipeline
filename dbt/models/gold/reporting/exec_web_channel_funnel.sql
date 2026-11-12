@@ -30,15 +30,16 @@ totals as (
 
 )
 
+-- Each column is cast to its contract type (_reporting.yml)
 select
-    t.brand,
-    brands.brand_name,
-    t.channel,
-    w.window_start,
-    w.window_end,
-    t.sessions,
-    t.purchases,
-    t.ad_spend_usd,
+    t.brand::varchar                                                      as brand,
+    brands.brand_name::varchar                                            as brand_name,
+    t.channel::varchar                                                    as channel,
+    w.window_start::date                                                  as window_start,
+    w.window_end::date                                                    as window_end,
+    t.sessions::int                                                       as sessions,
+    t.purchases::int                                                      as purchases,
+    t.ad_spend_usd::float                                                 as ad_spend_usd,
     round(t.engaged_sessions / t.sessions, 4)::number(18, 4)              as engaged_rate,
     round(t.view_item_sessions / t.sessions, 4)::number(18, 4)            as view_item_rate,
     round(t.add_to_cart_sessions / t.sessions, 4)::number(18, 4)          as add_to_cart_rate,

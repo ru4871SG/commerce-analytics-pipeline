@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import sys
@@ -17,11 +18,41 @@ BASE_URL = "http://127.0.0.1:8080"
 # The states a task instance is printed in; the last four are final
 SHOWN = ("up_for_retry", "success", "skipped", "failed", "upstream_failed")
 LOGIN_FAILED = 3
+UNREACHABLE = 4
+REQUEST_TIMEOUT = 30       # seconds one request may take
+PATIENCE = 300             # seconds the API server may stop answering before the script gives up
+RETRY_WAIT = 5             # seconds between two tries of a request that got no answer
+POLL_INTERVAL = 3          # seconds between two looks at the run
+# No answer, as opposed to an answer that says no. HTTPError is a URLError: check it first.
+NO_ANSWER = (urllib.error.URLError, ConnectionError, TimeoutError, http.client.HTTPException)
+BUSY_STATUSES = (502, 503, 504)
+
+
+class Unreachable(Exception):
+    """The API server did not answer for PATIENCE seconds."""
+
+
+def no_answer(error: BaseException) -> bool:
+    """Whether a request failed for want of an answer, which is worth trying again."""
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code in BUSY_STATUSES
+    return isinstance(error, NO_ANSWER)
+
+
+def reason(error: BaseException) -> str:
+    """A few words on why a request failed, never the request itself (it may carry the password)."""
+    if isinstance(error, urllib.error.HTTPError):
+        return f"HTTP {error.code}"
+    if isinstance(error, urllib.error.URLError):
+        return str(error.reason)
+    return str(error) or type(error).__name__
 
 
 class Api:
-    def __init__(self) -> None:
+    def __init__(self, patience: float = PATIENCE, retry_wait: float = RETRY_WAIT) -> None:
         self.token = ""
+        self.patience = patience
+        self.retry_wait = retry_wait
 
     def login(self) -> None:
         password = os.environ.get("AIRFLOW_PASSWORD")
@@ -35,7 +66,38 @@ class Api:
                 sys.exit(LOGIN_FAILED)
             raise
 
-    def call(self, method: str, path: str, payload: dict | None = None) -> dict:
+    def call(self, method: str, path: str, payload: dict | None = None, patient: bool = True) -> dict:
+        """One request. Patient: one that gets no answer is tried again until the API server has
+        been silent for `patience` seconds, which raises Unreachable."""
+        if not patient:
+            return self.call_once(method, path, payload)
+        silent_since = None       # when the first request that got no answer was sent
+        while True:
+            sent = time.monotonic()
+            try:
+                answer = self.call_once(method, path, payload)
+                break
+            except Exception as error:
+                if (silent_since is not None and method == "POST"
+                        and isinstance(error, urllib.error.HTTPError) and error.code == 409):
+                    answer = {}
+                    break
+                if not no_answer(error):
+                    raise
+                now = time.monotonic()
+                if silent_since is None:
+                    silent_since = sent
+                    print(f"  Airflow's API did not answer in {now - sent:.0f} s ({reason(error)}): trying "
+                          f"again until it has been silent for {self.patience:.0f} s", flush=True)
+                if now - silent_since >= self.patience:
+                    raise Unreachable(f"Airflow's API has not answered for {now - silent_since:.0f} s "
+                                      f"({reason(error)})") from error
+                time.sleep(self.retry_wait)
+        if silent_since is not None:
+            print(f"  Airflow's API answers again, after {time.monotonic() - silent_since:.0f} s", flush=True)
+        return answer
+
+    def call_once(self, method: str, path: str, payload: dict | None = None) -> dict:
         if not self.token:
             self.login()
         try:
@@ -52,13 +114,14 @@ class Api:
         request.add_header("Content-Type", "application/json")
         if self.token:
             request.add_header("Authorization", f"Bearer {self.token}")
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:
             return json.loads(response.read() or b"{}")
 
 
 def parsed(api: Api, dag_id: str) -> bool:
     try:
-        api.call("GET", f"/api/v2/dags/{dag_id}")
+        # Not patient: ready() has its own loop and limit for a server that is still starting
+        api.call("GET", f"/api/v2/dags/{dag_id}", patient=False)
         return True
     except urllib.error.HTTPError as error:
         if error.code == 404:
@@ -78,14 +141,14 @@ def ready(api: Api, dag_ids: list[str], timeout: int = 300) -> int:
         except urllib.error.HTTPError as error:
             if error.code < 500:
                 raise
-        except (urllib.error.URLError, ConnectionError, TimeoutError):
+        except NO_ANSWER:
             pass                          # the API server is still starting
         if time.monotonic() > deadline:
             print(f"Airflow has not parsed {', '.join(waiting)} after {timeout} s. See .local/airflow.log", file=sys.stderr)
             try:
-                for error in api.call("GET", "/api/v2/importErrors")["import_errors"]:
+                for error in api.call("GET", "/api/v2/importErrors", patient=False)["import_errors"]:
                     print(f"  {error['filename']}:\n{error['stack_trace']}", file=sys.stderr)
-            except (urllib.error.URLError, ConnectionError, TimeoutError):
+            except NO_ANSWER:
                 pass
             return 1
         time.sleep(2)
@@ -107,11 +170,22 @@ def label(task: dict) -> str:
 
 def run(api: Api, dag_id: str, run_id: str) -> int:
     """Switch the DAG on (a paused DAG's runs stay queued), trigger it, and follow the run."""
-    api.call("PATCH", f"/api/v2/dags/{dag_id}", {"is_paused": False})
-    api.call("POST", f"/api/v2/dags/{dag_id}/dagRuns",
-             {"dag_run_id": run_id, "logical_date": None, "note": "Triggered by scripts/local.sh fullrun"})
     run_url = f"{BASE_URL}/dags/{dag_id}/runs/{quote(run_id, safe='')}"
-    print(f"{dag_id}: run {run_id}, executed by the scheduler: {run_url}", flush=True)
+    run_is = "was not triggered"
+    try:
+        api.call("PATCH", f"/api/v2/dags/{dag_id}", {"is_paused": False})
+        run_is = "may or may not have been triggered"
+        api.call("POST", f"/api/v2/dags/{dag_id}/dagRuns",
+                 {"dag_run_id": run_id, "logical_date": None, "note": "Triggered by scripts/local.sh fullrun"})
+        run_is = "goes on in the scheduler without this script"
+        print(f"{dag_id}: run {run_id}, executed by the scheduler: {run_url}", flush=True)
+        return follow(api, dag_id, run_id, run_url)
+    except Unreachable as error:
+        print(f"{dag_id}: {error}. Gave up: run {run_id} {run_is}. See {run_url}", file=sys.stderr)
+        return UNREACHABLE
+
+
+def follow(api: Api, dag_id: str, run_id: str, run_url: str) -> int:
     started, shown, said_queued = time.monotonic(), {}, False
     while True:
         dag_run = api.call("GET", f"/api/v2/dags/{dag_id}/dagRuns/{quote(run_id, safe='')}")
@@ -127,7 +201,7 @@ def run(api: Api, dag_id: str, run_id: str) -> int:
                 print(f"  {label(task):<48} {task['state']:<16} {took}", flush=True)
         if run_state in ("success", "failed"):
             break
-        time.sleep(3)
+        time.sleep(POLL_INTERVAL)
 
     minutes, seconds = divmod(round(time.monotonic() - started), 60)
     if run_state == "success":

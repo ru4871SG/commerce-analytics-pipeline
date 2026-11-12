@@ -79,23 +79,25 @@ ad_spend as (
 
 )
 
+-- Each column is cast to its contract type (_reporting.yml)
 select
-    b.brand,
-    b.brand_name,
-    d.date_day,
-    coalesce(o.gross_sales_usd, 0)                                     as gross_sales_usd,
-    coalesce(rf.refunds_usd, 0)                                        as refunds_usd,
-    coalesce(o.gross_sales_usd, 0) - coalesce(rf.refunds_usd, 0)       as revenue_usd,
-    coalesce(o.margin_before_refunds_usd, 0) - coalesce(rf.refunds_usd, 0)
+    b.brand::varchar                                                   as brand,
+    b.brand_name::varchar                                              as brand_name,
+    d.date_day::date                                                   as date_day,
+    coalesce(o.gross_sales_usd, 0)::float                              as gross_sales_usd,
+    coalesce(rf.refunds_usd, 0)::float                                 as refunds_usd,
+    (coalesce(o.gross_sales_usd, 0) - coalesce(rf.refunds_usd, 0))::float
+                                                                       as revenue_usd,
+    (coalesce(o.margin_before_refunds_usd, 0) - coalesce(rf.refunds_usd, 0))::float
                                                                        as contribution_margin_usd,
-    coalesce(o.revenue_orders, 0)                                      as revenue_orders,
-    coalesce(nc.new_customers, 0)                                      as new_customers,
-    coalesce(o.new_subscriptions, 0)                                   as new_subscriptions,
+    coalesce(o.revenue_orders, 0)::int                                 as revenue_orders,
+    coalesce(nc.new_customers, 0)::int                                 as new_customers,
+    coalesce(o.new_subscriptions, 0)::int                              as new_subscriptions,
     -- Negative on purpose: the report draws cancellations below the axis
-    -coalesce(cs.canceled_subscriptions, 0)                            as canceled_subscriptions,
-    coalesce(o.new_subscriptions, 0) - coalesce(cs.canceled_subscriptions, 0)
+    (-coalesce(cs.canceled_subscriptions, 0))::int                     as canceled_subscriptions,
+    (coalesce(o.new_subscriptions, 0) - coalesce(cs.canceled_subscriptions, 0))::int
                                                                        as net_subscriptions,
-    coalesce(sp.ad_spend_usd, 0)                                       as ad_spend_usd
+    coalesce(sp.ad_spend_usd, 0)::float                                as ad_spend_usd
 from brands as b
 cross join days as d
 left join orders_by_day as o

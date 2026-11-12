@@ -162,6 +162,39 @@ def test_nothing_to_publish_still_creates_the_warehouse_tables(local):
     assert any("create table if not exists RAW.WEB.\"DAILY_FUNNEL\"" in s for s in created)
 
 
+def test_the_dbt_step_creates_the_same_two_tables_so_a_first_batch_that_fails_leaves_dbt_its_sources(local):
+    """dbt does not wait for the clickstream, and its sources are these tables: without them
+    `dbt source freshness` fails and the report is not built. A batch that fails never reaches
+    publish, so publishing cannot be the only step that creates them."""
+    from crm_pipeline import raw_tables
+
+    by_dbt, by_publish = RecordingCursor(), RecordingConnection()
+    raw_tables.create_side_tables(by_dbt)
+    lakehouse.publish({"action": "nothing", "batch_id": None, "reason": "no file"}, by_publish)
+    web = [statement for statement in by_dbt.statements if "RAW.WEB" in statement]
+    assert web == [statement for statement in by_publish.cursors[0].statements if statement.startswith("create")
+                   and "RAW.WEB" in statement]
+    # The statements as they were when only publish ran them: a warehouse that has the tables keeps them
+    assert web == [
+        "create schema if not exists RAW.WEB",
+        'create table if not exists RAW.WEB."DAILY_FUNNEL" ("BRAND" VARCHAR, "BUSINESS_DATE" DATE, "CHANNEL" VARCHAR, '
+        '"DEVICE" VARCHAR, "SESSIONS" NUMBER(38, 0), "ENGAGED_SESSIONS" NUMBER(38, 0), "VIEW_ITEM_SESSIONS" NUMBER(38, 0), '
+        '"ADD_TO_CART_SESSIONS" NUMBER(38, 0), "CHECKOUT_SESSIONS" NUMBER(38, 0), "PURCHASE_SESSIONS" NUMBER(38, 0), '
+        '"PURCHASES" NUMBER(38, 0), "EVENTS" NUMBER(38, 0), "_BATCH_ID" VARCHAR, "_ENGINE" VARCHAR, '
+        "_LOADED_AT TIMESTAMP_NTZ)",
+        'create table if not exists RAW.WEB."EVENT_BATCHES" ("BATCH_ID" VARCHAR, "ENGINE" VARCHAR, "REASON" VARCHAR, '
+        '"FILES" NUMBER(38, 0), "COMPRESSED_BYTES" NUMBER(38, 0), "ESTIMATED_ROWS" NUMBER(38, 0), '
+        '"ESTIMATED_PANDAS_BYTES" NUMBER(38, 0), "BUDGET_BYTES" NUMBER(38, 0), "BRONZE_ROWS" NUMBER(38, 0), '
+        '"SILVER_INSERTED" NUMBER(38, 0), "DROPPED_JSON" VARCHAR, "GOLD_FROM" DATE, "GOLD_TO" DATE, '
+        '"GOLD_ROWS" NUMBER(38, 0), "OBSERVED_PANDAS_BYTES" NUMBER(38, 0), "SECONDS" FLOAT, "CONTRACT" VARCHAR, '
+        '"ORCHESTRATOR" VARCHAR, "RUN_ID" VARCHAR, "PLANNED_AT" TIMESTAMP_NTZ, "SUCCEEDED_AT" TIMESTAMP_NTZ, '
+        "_LOADED_AT TIMESTAMP_NTZ)",
+    ]
+    # Every source of dbt that a step outside the report writes is among them (dbt/models/bronze/_sources.yml)
+    assert {table.split(".", 1)[1].replace('"', "") for table in raw_tables.create_side_tables(RecordingCursor())} == {
+        "REF.FX_RATES", "CRM.ORDERS_CDC", "WEB.DAILY_FUNNEL", "WEB.EVENT_BATCHES"}
+
+
 def test_a_batch_that_did_not_succeed_is_not_published(local):
     planning.record(local, "b2", "PLANNED", engine="spark", files_json="[]")
     planning.record(local, "b2", "FAILED", engine="spark", error="boom")

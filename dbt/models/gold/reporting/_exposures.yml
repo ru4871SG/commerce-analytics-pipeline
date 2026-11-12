@@ -1,0 +1,38 @@
+exposures:
+  - name: executive_report
+    label: Executive Report
+    type: dashboard
+    maturity: high
+    # Where the dashboard is: in Superset, at SUPERSET_URL. CRM_EXPOSURE_URL replaces the whole
+    # link when the docs are built for a site that is published (scripts/local.sh site), where
+    # it is the site's own picture of the dashboard.
+    url: "{{ env_var('CRM_EXPOSURE_URL', env_var('SUPERSET_URL', 'http://localhost:8088') ~ '/superset/dashboard/executive-report/') }}"
+    description: >
+      The Superset dashboard built from local/superset/build_bundle.py: revenue, contribution
+      margin, customers, subscriptions, churn, rebuy, CAC and LTV by channel, the storefront
+      funnel, monthly recurring revenue and what moved it, revenue at actual exchange rates,
+      margin by product, refunds by reason, the upsell attach rate, and the numbers that are
+      unusual on the as-of day, for the three brands. Each chart reads one exec_* model that
+      already has the chart's grain, and a native Brand filter on brand_name applies to all of
+      them. The activation job queries every chart through Superset's API after each gold
+      rebuild (local/superset/check_dashboard.py).
+    depends_on:
+      - ref('exec_daily_brand_metrics')
+      - ref('exec_kpi_snapshot')
+      - ref('exec_subscription_survival')
+      - ref('exec_rebuy_curve')
+      - ref('exec_active_subscriptions_weekly')
+      - ref('exec_daily_orders_live')
+      - ref('exec_cohort_contribution_margin')
+      - ref('exec_channel_cac_ltv')
+      - ref('exec_web_daily_sessions')
+      - ref('exec_web_channel_funnel')
+      - ref('exec_kpi_anomalies')
+      - ref('exec_product_performance')
+      - ref('exec_refund_reasons')
+      - ref('exec_upsell_attach')
+      - ref('exec_mrr_movements')
+      - ref('exec_mrr_monthly')
+      - ref('exec_fx_impact')
+    owner:
+      name: Ruddy Gunawan

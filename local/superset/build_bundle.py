@@ -10,7 +10,6 @@ datasets, charts and dashboard instead of creating duplicates.
 """
 from __future__ import annotations
 
-import json
 import shutil
 import uuid
 import zipfile
@@ -41,11 +40,11 @@ def uid(kind: str, name: str) -> str:
 # ---------------------------------------------------------------------------
 # Datasets. Types are metadata for the Superset UI; queries go to Snowflake.
 # ---------------------------------------------------------------------------
-def col(name: str, type_: str = "VARCHAR", is_dttm: bool = False) -> dict:
+def col(name: str, type_: str = "VARCHAR", is_dttm: bool = False, label: str | None = None) -> dict:
     return {
         "column_name": name,
         "extra": None,
-        "verbose_name": None,
+        "verbose_name": label,      # the heading a table shows instead of the column's name
         "is_dttm": is_dttm,
         "is_active": True,
         "type": type_,
@@ -253,6 +252,103 @@ DATASETS = {
             metric("avg__conversion_rate", "AVG(conversion_rate)", "Purchase", ".2%"),
         ],
     },
+    "exec_kpi_anomalies": {
+        "columns": [
+            col("brand"), col("brand_name", label="Brand"), col("date_day", "TIMESTAMP", True), col("metric", label="Metric"),
+            col("value", "DOUBLE", label="On the day"), col("baseline_median", "DOUBLE", label="Usual for the weekday"),
+            col("spread", "DOUBLE"), col("robust_z", "DOUBLE", label="Robust z-score"),
+            col("direction", label="Side"), col("is_anomaly", "BOOLEAN", label="Unusual"),
+            col("is_as_of_day", "BOOLEAN"), col("comparison_days", "BIGINT", label="Earlier weeks compared"),
+        ],
+        "main_dttm_col": "date_day",
+        "description": "Each brand's daily numbers against the same weekday of the eight weeks before, for the last 90 days.",
+        "metrics": [],      # its chart shows the rows as they are stored
+    },
+    "exec_product_performance": {
+        "columns": [
+            col("brand"), col("brand_name"), col("month_start", "TIMESTAMP", True),
+            col("product_name"), col("purchase_type"), col("units", "BIGINT"),
+            col("line_revenue_usd", "DOUBLE"), col("line_cost_usd", "DOUBLE"), col("line_margin_usd", "DOUBLE"),
+            col("units_in_refunded_orders", "BIGINT"),
+        ],
+        "main_dttm_col": "month_start",
+        "description": "Units, line revenue, cost and margin per brand, month, product and purchase type, on revenue orders.",
+        "metrics": [
+            metric("sum__line_margin_usd", "SUM(line_margin_usd)", "Line margin (USD)", "$,.2f"),
+            metric("sum__units", "SUM(units)", "Units"),
+        ],
+    },
+    "exec_refund_reasons": {
+        "columns": [
+            col("brand"), col("brand_name"), col("month_start", "TIMESTAMP", True), col("refund_reason"),
+            col("refunds", "BIGINT"), col("refund_amount_usd", "DOUBLE"),
+            col("refunds_requiring_return", "BIGINT"), col("days_to_refund_sum", "BIGINT"),
+        ],
+        "main_dttm_col": "month_start",
+        "description": "The refunds that come off revenue, per brand, month of issue and reason.",
+        "metrics": [
+            metric("sum__refund_amount_usd", "SUM(refund_amount_usd)", "Refunded (USD)", "$,.2f"),
+            metric("avg_days_to_refund", "SUM(days_to_refund_sum) / NULLIF(SUM(refunds), 0)", "Average days to refund", ",.1f"),
+        ],
+    },
+    "exec_upsell_attach": {
+        "columns": [
+            col("brand"), col("brand_name"), col("month_start", "TIMESTAMP", True),
+            col("first_orders", "BIGINT"), col("first_orders_with_upsell", "BIGINT"),
+        ],
+        "main_dttm_col": "month_start",
+        "description": "Customers' first orders per brand and month, and how many of them have an upsell line.",
+        "metrics": [
+            metric("upsell_attach_rate", "SUM(first_orders_with_upsell) / NULLIF(SUM(first_orders), 0)", "Upsell attach rate", ".1%"),
+        ],
+    },
+    "exec_mrr_movements": {
+        "columns": [
+            col("brand"), col("brand_name"), col("month_start", "TIMESTAMP", True), col("movement_type"),
+            col("mrr_usd", "DOUBLE"), col("subscriptions", "BIGINT"),
+        ],
+        "main_dttm_col": "month_start",
+        "description": "What moved monthly recurring revenue per brand and month: new, reactivated and churned (negative) subscriptions.",
+        "metrics": [
+            # The same sum twice: by movement type it is one movement, over all types the net change.
+            # The mixed chart's legend writes the first as "MRR (USD), new", so its name is short
+            metric("sum__mrr_usd", "SUM(mrr_usd)", "MRR (USD)", "$,.2f"),
+            metric("net_new_mrr_usd", "SUM(mrr_usd)", "Net new MRR (USD)", "$,.2f"),
+        ],
+    },
+    "exec_mrr_monthly": {
+        "columns": [
+            col("brand"), col("brand_name"), col("month_start", "TIMESTAMP", True),
+            *(col(name, "DOUBLE") for name in (
+                "opening_mrr_usd", "new_mrr_usd", "reactivated_mrr_usd", "churned_mrr_usd",
+                "closing_mrr_usd", "closing_paused_mrr_usd",
+            )),
+            *(col(name, "BIGINT") for name in (
+                "opening_subscriptions", "new_subscriptions", "reactivated_subscriptions",
+                "churned_subscriptions", "closing_subscriptions", "closing_paused_subscriptions",
+            )),
+            col("is_complete_month", "BOOLEAN"),
+        ],
+        "main_dttm_col": "month_start",
+        "description": "Monthly recurring revenue per brand and month as a roll-forward: opening, new, reactivated, churned, closing.",
+        "metrics": [
+            metric("sum__closing_mrr_usd", "SUM(closing_mrr_usd)", "MRR (USD)", "$,.2f"),
+            metric("revenue_churn_rate", "SUM(churned_mrr_usd) / NULLIF(SUM(opening_mrr_usd), 0)", "Revenue churn", ".1%"),
+        ],
+    },
+    "exec_fx_impact": {
+        "columns": [
+            col("brand"), col("brand_name"), col("month_start", "TIMESTAMP", True),
+            col("revenue_usd_constant", "DOUBLE"), col("revenue_usd_actual", "DOUBLE"), col("fx_effect_usd", "DOUBLE"),
+        ],
+        "main_dttm_col": "month_start",
+        "description": "Revenue per brand and month at the constant rate and at the ECB's rate of each day, and the difference.",
+        "metrics": [
+            metric("sum__revenue_usd_actual", "SUM(revenue_usd_actual)", "At the rates of the day (USD)", "$,.2f"),
+            metric("sum__revenue_usd_constant", "SUM(revenue_usd_constant)", "At constant rates (USD)", "$,.2f"),
+            metric("sum__fx_effect_usd", "SUM(fx_effect_usd)", "Exchange-rate effect (USD)", "$,.2f"),
+        ],
+    },
 }
 for name, definition in DATASETS.items():
     definition["uuid"] = uid("dataset", name)
@@ -269,6 +365,10 @@ BASE = {
     "annotation_layers": [],
     "dashboards": [],
 }
+# What a mixed_timeseries chart takes as seriesType and seriesTypeB: an ECharts series type, or
+# one of three step lines (Superset's EchartsTimeseriesSeriesType). Anything else, the name of a
+# chart plugin included, is not an error: the query is drawn as lines.
+MIXED_SERIES_TYPES = ("line", "scatter", "smooth", "bar", "start", "middle", "end")
 
 
 def chart(name: str, viz_type: str, dataset: str, params: dict, description: str = "") -> dict:
@@ -317,11 +417,41 @@ def latest_day(name: str, dataset: str, metric_name: str, fmt: str, description:
     }, description)
 
 
+def sql_filter(expression: str, name: str) -> dict:
+    """A chart's own filter, written in SQL. check_dashboard.py applies it when it queries the chart."""
+    return {
+        "clause": "WHERE", "expressionType": "SQL", "sqlExpression": expression,
+        "subject": None, "operator": None, "comparator": None, "isExtra": False, "isNew": False,
+        "filterOptionName": name,
+    }
+
+
+def latest_complete_month(name: str, dataset: str, metric_name: str, fmt: str, description: str = "") -> dict:
+    """A Big Number for the latest month that is over, named under it, with the months before as a trend."""
+    return chart(name, "big_number", dataset, {
+        "metric": metric_name,
+        "x_axis": "month_start",
+        "time_grain_sqla": "P1M",
+        # The month that holds the as-of date is not over: its number would be a part of a month's
+        "adhoc_filters": [sql_filter("is_complete_month = true", "filter_complete_months")],
+        "show_trend_line": True,
+        "start_y_axis_at_zero": True,
+        "show_timestamp": True,
+        "y_axis_format": fmt,
+        "header_font_size": 0.4,
+        "subheader_font_size": 0.15,
+        "time_format": "%B %Y",
+        "rolling_type": "None",
+    }, description)
+
+
 def time_series(name: str, dataset: str, viz_type: str, metrics: list[str],
                 x_axis: str = "date_day", grain: str = "P1W", groupby: bool = True,
                 stack: bool = False, fmt: str = "SMART_NUMBER", description: str = "",
-                dimension: str = "brand_name") -> dict:
+                dimension: str = "brand_name", horizontal: bool = False) -> dict:
     return chart(name, viz_type, dataset, {
+        # Bars lying down, for an axis of names: standing up, every second name is left out for room
+        **({"orientation": "horizontal"} if horizontal else {}),
         "x_axis": x_axis,
         "time_grain_sqla": grain,
         "metrics": metrics,
@@ -452,9 +582,14 @@ CHARTS = [
         "row_limit_b": 10000,
         "order_desc": True,
         "order_desc_b": True,
-        "seriesType": "echarts_timeseries_bar",
-        "seriesTypeB": "echarts_timeseries_line",
-        "yAxisIndex": 1,
+        # ECharts series types, not chart plugin names: with a name it does not know, the plugin
+        # draws lines (MIXED_SERIES_TYPES)
+        "seriesType": "bar",
+        "seriesTypeB": "line",
+        # The brands' bars on one another: new above the axis, cancelled below it
+        "stack": "Stack",
+        # One axis for both, so the bars and the lines share their zero
+        "yAxisIndex": 0,
         "yAxisIndexB": 0,
         "y_axis_format": "SMART_NUMBER",
         "y_axis_format_secondary": "SMART_NUMBER",
@@ -465,6 +600,104 @@ CHARTS = [
         "x_axis_time_format": "smart_date",
         "color_scheme": "supersetColors",
     }, "Bars: new and cancelled subscriptions; line: net subscriptions. Cancellations are negative."),
+    time_series("MRR by month", "exec_mrr_monthly", "echarts_timeseries_line",
+                ["sum__closing_mrr_usd"], x_axis="month_start", grain="P1M", fmt="$,.2f",
+                description="Monthly recurring revenue: what the subscriptions running at the end of each month are "
+                            "worth a month, one unit of each at its price, VAT removed, in USD at constant-currency "
+                            "rates. The latest month is the balance on the as-of date."),
+    latest_complete_month("Revenue churn, last complete month", "exec_mrr_monthly", "revenue_churn_rate", ".1%",
+                          "The MRR of the subscriptions cancelled in the latest month that is over, divided by the "
+                          "MRR the month opened with. The line shows the months before it. With several brands "
+                          "selected, their MRR is pooled."),
+    chart("MRR movements by month", "mixed_timeseries", "exec_mrr_movements", {
+        "x_axis": "month_start",
+        "time_grain_sqla": "P1M",
+        "metrics": ["sum__mrr_usd"],
+        "metrics_b": ["net_new_mrr_usd"],
+        "groupby": ["movement_type"],
+        "groupby_b": [],
+        "adhoc_filters_b": [],
+        "row_limit": 10000,
+        "row_limit_b": 10000,
+        "order_desc": True,
+        "order_desc_b": True,
+        "seriesType": "bar",
+        "seriesTypeB": "line",
+        "stack": "Stack",
+        # One axis for both: the line is the sum of the month's bars
+        "yAxisIndex": 0,
+        "yAxisIndexB": 0,
+        "y_axis_format": "$,.2f",
+        "y_axis_format_secondary": "$,.2f",
+        "show_legend": True,
+        "rich_tooltip": True,
+        "legendOrientation": "top",
+        "legendType": "scroll",
+        "x_axis_time_format": "smart_date",
+        "color_scheme": "supersetColors",
+    }, "Bars: the MRR that subscriptions starting in the month added (new, or reactivated when a customer came back "
+       "after cancelling) and the MRR that cancelled ones took away (churned, below the axis). Line: the net change. "
+       "The latest month runs to the as-of date."),
+    time_series("Revenue by month at actual and at constant rates", "exec_fx_impact", "echarts_timeseries_line",
+                ["sum__revenue_usd_actual", "sum__revenue_usd_constant"], x_axis="month_start", grain="P1M",
+                groupby=False, fmt="$,.2f",
+                description="Revenue in USD twice: at the constant (budget) rates every other chart uses, and with "
+                            "each order and refund at the ECB's rate of its own day. The gap is what the exchange "
+                            "rate did. A brand that sells in USD has none. The latest month runs to the as-of date."),
+    time_series("Exchange-rate effect by month", "exec_fx_impact", "echarts_timeseries_bar",
+                ["sum__fx_effect_usd"], x_axis="month_start", grain="P1M", stack=True, fmt="$,.2f",
+                description="Revenue at the rates of the day minus revenue at constant rates, by brand: above "
+                            "zero, the brand's currency was worth more dollars than the constant rate says."),
+    # "$.3~s" writes $25k: lying down, the last label of the axis is cut at the frame when it is as long as $25,000.00
+    time_series("Margin by product", "exec_product_performance", "echarts_timeseries_bar",
+                ["sum__line_margin_usd"], x_axis="product_name", grain=None, stack=True, fmt="$.3~s",
+                dimension="purchase_type", horizontal=True,
+                description="What each product's order lines sold for, VAT removed, less what they cost, over every "
+                            "month, by how the product was bought. Before refunds and ad spend. A product with no "
+                            "cost in the catalogue shows its whole revenue as margin."),
+    time_series("Units by product and month", "exec_product_performance", "echarts_timeseries_bar",
+                ["sum__units"], x_axis="month_start", grain="P1M", stack=True, dimension="product_name",
+                description="Units on the lines of revenue orders, by the month of the order. The latest month "
+                            "runs to the as-of date."),
+    time_series("Upsell attach rate by month", "exec_upsell_attach", "echarts_timeseries_line",
+                ["upsell_attach_rate"], x_axis="month_start", grain="P1M", groupby=False, fmt=".1%",
+                description="Of the customers' first orders placed in the month, the share with an upsell line. "
+                            "With several brands selected, their first orders are pooled."),
+    time_series("Refund amount by reason and month", "exec_refund_reasons", "echarts_timeseries_bar",
+                ["sum__refund_amount_usd"], x_axis="month_start", grain="P1M", stack=True, fmt="$,.2f",
+                dimension="refund_reason",
+                description="The refunds that come off revenue, VAT removed, in the month they were issued, by "
+                            "the reason recorded on the refund."),
+    time_series("Average days to refund by reason", "exec_refund_reasons", "echarts_timeseries_bar",
+                ["avg_days_to_refund"], x_axis="refund_reason", grain=None, groupby=False, fmt=",.1f", horizontal=True,
+                description="Days from the order's date to the refund's, averaged over the refunds of every month."),
+    # Every metric of the as-of day, flagged or not: a table of the flagged ones alone would be
+    # empty on a normal day, and an empty chart fails the dashboard check.
+    chart("Unusual numbers on the as-of day", "table", "exec_kpi_anomalies", {
+        "query_mode": "raw",
+        "all_columns": ["brand_name", "metric", "value", "baseline_median", "robust_z", "direction",
+                        "is_anomaly", "comparison_days"],
+        "adhoc_filters": [{
+            "clause": "WHERE", "expressionType": "SQL", "sqlExpression": "is_as_of_day = true",
+            "subject": None, "operator": None, "comparator": None, "isExtra": False, "isNew": False,
+            "filterOptionName": "filter_as_of_day",
+        }],
+        "order_by_cols": ['["is_anomaly", false]', '["brand_name", true]', '["metric", true]'],
+        "row_limit": 1000,
+        "server_pagination": False,
+        "include_search": False,
+        "show_cell_bars": False,
+        "allow_render_html": False,
+        "table_timestamp_format": "smart_date",
+        "column_config": {
+            "value": {"d3NumberFormat": ",.2f"},
+            "baseline_median": {"d3NumberFormat": ",.2f"},
+            "robust_z": {"d3NumberFormat": "+,.2f"},
+        },
+    }, "Each metric on the as-of date beside its usual value for that weekday (the median of the same weekday in "
+       "the eight weeks before). The z-score is the distance in robust standard deviations; it is empty when the "
+       "earlier values were all the same. Unusual: a z-score of 3.5 or more and a difference of at least about one "
+       "usual day of the metric. The digest leads with the unusual rows."),
 ]
 CHART_BY_NAME = {chart["slice_name"]: chart for chart in CHARTS}
 
@@ -499,14 +732,27 @@ LAYOUT = [
     [chart_ref("Storefront sessions by channel", 7, 55), chart_ref("Storefront funnel by channel", 5, 55)],
     [chart_ref("Net Subscriptions L30D", 3, 30), chart_ref("Net Subscriptions L60D", 3, 30),
      chart_ref("Net Subscriptions L90D", 3, 30), chart_ref("Net Subscriptions L180D", 3, 30)],
-    [chart_ref("Active subscriptions", 12, 60)],
-    [chart_ref("New / cancelled / net subscriptions by month", 12, 60)],
+    # Side by side: a chart of months with bars keeps its last labels apart at 8 columns or fewer
+    [chart_ref("Active subscriptions", 5, 60), chart_ref("New / cancelled / net subscriptions by month", 7, 60)],
     [chart_ref("Churn L30D", 4, 30), chart_ref("Churn L60D", 4, 30),
      chart_ref("Churn L90D", 4, 30)],
     [chart_ref("Cancelled within 30 days", 4, 30), chart_ref("Cancelled within 60 days", 4, 30),
      chart_ref("Cancelled within 90 days", 4, 30)],
     [chart_ref("Subscribers left after N days", 6, 60), chart_ref("Rebuy %", 6, 60)],
     [chart_ref("Contribution margin per customer by cohort", 12, 70)],
+    [markdown("Recurring revenue heading", "## Recurring revenue\n\nWhat the subscriptions are worth: monthly recurring revenue (MRR) counts each running subscription at one unit of its product a month, VAT removed. That is what a renewal charges, so a first order's extra units, upsell, shipping and discounts are left out. A month's balance opens where the month before closed, grows by the subscriptions that start and falls by the ones that are cancelled.", 12, 24)],
+    [chart_ref("MRR by month", 12, 60)],
+    # Not the full width: with 60 px or more per month the axis' last two labels, October and November, touch
+    [chart_ref("Revenue churn, last complete month", 4, 60), chart_ref("MRR movements by month", 8, 60)],
+    [markdown("Exchange rates heading", "## Exchange rates\n\nEvery other chart in the dashboard converts the brands to USD at one constant (budget) rate per currency, so growth is not affected by day-to-day exchange-rate changes. The two charts below show what the same revenue was worth at the actual rate of each day, including order at the rate of the day it was placed, and refund at the rate of the day it was issued. The forex rates come from ECB's public API, which quotes USD/EUR and GBP/EUR, dividing the first by the second gives USD per GBP.", 12, 28)],
+    [chart_ref("Revenue by month at actual and at constant rates", 7, 60), chart_ref("Exchange-rate effect by month", 5, 60)],
+    [markdown("Products heading", "## Products\n\nWhich products make the margin, from the lines of revenue orders. A line's margin is its own total without VAT, less its cost. Shipping charged and discounts on a whole order stay with the order, and an order's fixed costs (shipping, processing, payment fees) sit on its first line.", 12, 24)],
+    [chart_ref("Margin by product", 12, 60)],
+    [chart_ref("Units by product and month", 7, 60), chart_ref("Upsell attach rate by month", 5, 60)],
+    [markdown("Refunds heading", "## Refunds\n\nWhy orders are refunded: the refunds that come off revenue, in the month they were issued, by the reason recorded on them.", 12, 20)],
+    [chart_ref("Refund amount by reason and month", 8, 60), chart_ref("Average days to refund by reason", 4, 60)],
+    [markdown("Unusual numbers heading", "## Unusual numbers\n\nEach brand's revenue, contribution margin, orders, new customers, new and cancelled subscriptions and ad spend on that day, compared against what the brand usually does on that weekday. The rows marked unusual are the ones the daily digest leads with.", 12, 24)],
+    [chart_ref("Unusual numbers on the as-of day", 12, 90)],
     [markdown("Footer", "_Rolling and to-date figures are measured from the latest order date (or the dbt `as_of_date` variable). Churn pools the selected brands; the cancelled-within cards and the cohort table average the brands' values._", 12, 18)],
 ]
 

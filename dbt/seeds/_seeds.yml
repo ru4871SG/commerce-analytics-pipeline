@@ -63,6 +63,41 @@ seeds:
                 min_value: 0
                 inclusive: false
 
+  - name: fx_rates_ecb
+    description: >
+      The exchange rates of each day: the ECB's euro foreign exchange reference rates for the
+      brands' currencies and USD, one row per currency and TARGET business day from 2025-01-02 to
+      the day the file was written, values as published. They are the history; the days after it
+      are loaded from the same API into RAW.REF.FX_RATES (dags/crm_pipeline/fx_rates.py), and
+      stg_ref__fx_rates puts the two together. With the history in the repo, dbt has a rate for
+      every order with no network. Written by `python -m crm_pipeline.fx_rates --write-seed`.
+      Source: ECB statistics.
+    config:
+      column_types:
+        rate_date: date
+        currency_code: varchar
+        eur_rate: number(18, 6)
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [rate_date, currency_code]
+    columns:
+      - name: rate_date
+        description: The day the ECB published the rate for. Weekends and TARGET holidays have none.
+        data_tests:
+          - not_null
+      - name: currency_code
+        data_tests:
+          - not_null
+      - name: eur_rate
+        description: Units of the currency per one euro. US dollars per pound are the USD rate divided by the GBP rate.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: false
+
   - name: product_name_corrections
     description: Product names to merge in first-order reporting (typos and offer names that are the same product).
     config:

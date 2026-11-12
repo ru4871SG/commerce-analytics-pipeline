@@ -116,17 +116,18 @@ measures as (
 
 )
 
+-- Each column is cast to its contract type (_reporting.yml)
 select
-    m.brand,
-    brands.brand_name,
-    m.channel,
-    w.window_start                                                      as acquisition_window_start,
-    w.window_end                                                        as acquisition_window_end,
-    m.spend_usd,
-    m.impressions,
-    m.clicks,
-    m.acquired_customers,
-    m.contribution_margin_90d_usd,
+    m.brand::varchar                                                    as brand,
+    brands.brand_name::varchar                                          as brand_name,
+    m.channel::varchar                                                  as channel,
+    w.window_start::date                                                as acquisition_window_start,
+    w.window_end::date                                                  as acquisition_window_end,
+    m.spend_usd::float                                                  as spend_usd,
+    m.impressions::int                                                  as impressions,
+    m.clicks::int                                                       as clicks,
+    m.acquired_customers::int                                           as acquired_customers,
+    m.contribution_margin_90d_usd::float                                as contribution_margin_90d_usd,
     round(m.cac, 2)::number(18, 2)                                      as cac_usd,
     round(m.ltv_90d, 2)::number(18, 2)                                  as ltv_90d_usd,
     round(m.ltv_90d / nullif(m.cac, 0), 3)::number(18, 3)               as ltv_to_cac_ratio

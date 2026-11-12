@@ -1,9 +1,18 @@
 services:
   crm-source:
-    image: docker.io/library/postgres:18
+    build:
+      context: ./source_db
+      dockerfile: Containerfile
     container_name: crm-source
     environment:
       POSTGRES_PASSWORD: postgres
+    command:
+      - "-c"
+      - "wal_level=logical"
+      - "-c"
+      - "max_slot_wal_keep_size=1GB"
+      - "-c"
+      - "output_plugin_libraries=pgoutput,test_decoding,wal2json"
     ports:
       - "127.0.0.1:5433:5432" # 5433
     volumes:

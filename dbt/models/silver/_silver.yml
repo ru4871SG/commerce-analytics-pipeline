@@ -132,6 +132,51 @@ models:
       - name: updated_at
         data_tests: [not_null]
 
+  # The change data capture is a side load: every test on its models warns, so none can fail the build
+  - name: stg_crm__orders_cdc
+    description: >
+      Every insert, update and delete of an order that the change data capture read from
+      PostgreSQL's write-ahead log (source crm.orders_cdc), with the columns that describe the
+      order's state. A delete carries the order's id only. Empty until the first capture.
+    data_tests:
+      # A change is one record of the log: its brand, its place in the log and the row's id name it
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, lsn_number, order_id]
+          config:
+            severity: warn
+    columns:
+      - name: order_id
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
+      - name: operation_code
+        description: I, U or D, as wal2json names an insert, an update and a delete.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["I", "U", "D"]
+              config:
+                severity: warn
+      - name: lsn_number
+        description: The change's place in the write-ahead log as a number. Changes happened in this order.
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
+      - name: committed_at
+        description: When the transaction that made the change committed, UTC.
+      - name: updated_at
+        description: The order's updated_at after the change. NULL for a delete.
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
+                where: "operation_code <> 'D'"
+      - name: captured_at
+        description: When the capture that read the change started, UTC.
+
   - name: stg_web__daily_funnel
     description: >
       The storefront funnel per brand, New York day, channel and device, from the lakehouse
@@ -159,3 +204,70 @@ models:
           - dbt_utils.accepted_range:
               arguments:
                 min_value: 1
+
+  # The exchange rates come from a side load (source ref.fx_rates), which the report never waits
+  # for. Their tests warn: a rate that is late or odd must show, and must not stop gold.
+  - name: stg_ref__fx_rates
+    description: >
+      One row per currency and day the ECB published a rate, from the seed fx_rates_ecb and from
+      RAW.REF.FX_RATES, with what one unit of the currency was worth in US dollars that day.
+      Source: ECB statistics.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [currency_code, rate_date]
+          config:
+            severity: warn
+    columns:
+      - name: eur_rate
+        description: Units of the currency per one euro, as the ECB published it.
+      - name: usd_per_unit
+        description: US dollars per one unit of the currency. The USD rate per euro divided by the currency's own; 1 for USD.
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: false
+              config:
+                severity: warn
+
+  - name: int_fx_rates_daily
+    description: >
+      One row per currency and calendar day, from the first published rate to the latest order
+      or refund: the rate that day's amounts are converted at. A day with no rate of its own (a
+      weekend, a TARGET holiday, a day the load did not run) takes the latest rate before it.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [currency_code, date_day]
+          config:
+            severity: warn
+    columns:
+      - name: date_day
+        description: The calendar day the rate applies to.
+      - name: rate_date
+        description: The day the rate was published for, on or before date_day. Never after it.
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
+      - name: days_carried_forward
+        description: >
+          How many days old the rate is: 0 on a day with its own, 1 and 2 over a weekend, up to 4
+          over Easter. More than 5 means the load has not brought a rate for days.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 5
+              config:
+                severity: warn
+      - name: usd_per_unit
+        description: US dollars per one unit of the currency at that rate.
+        data_tests:
+          - not_null:
+              config:
+                severity: warn

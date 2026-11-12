@@ -2,6 +2,7 @@
 """
 from __future__ import annotations
 
+import argparse
 import logging
 import math
 import random
@@ -9,8 +10,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from crm_pipeline import source_postgres
-from crm_pipeline.config import SOURCE_WRITER_CONN_ID, TIMEZONE
+from crm_pipeline import clickstream, source_postgres
+from crm_pipeline.config import SOURCE_WRITER_CONN_ID, TIMEZONE, Brand, brands_to_extract
 from crm_pipeline.errors import PermanentError
 
 log = logging.getLogger(__name__)
@@ -415,3 +416,47 @@ def simulate_day(brand_key: str, database: str, day: date) -> dict[str, int]:
         plan.counts["refunds"], plan.counts["ad_spend_cents"], f"{ids[0]}-{ids[-1]}" if ids else "none",
     )
     return plan.counts
+
+
+def simulate_range(first: date, last: date, brands: list[Brand] | None = None) -> dict[str, int]:
+    """Every brand's activity for each day from first to last, oldest first, and each day's
+    clickstream file: what the daily activity DAG (Airflow) and asset (Dagster) do for one day,
+    for a range of days in this process. A day is still one transaction per brand, and a day that
+    is already written is left as it is, so stopping part-way and running the range again is
+    safe. Returns the totals of what was written."""
+    brands = brands_to_extract() if brands is None else brands
+    total: dict[str, int] = {}
+    day = first
+    while day <= last:
+        for brand in brands:
+            counts = simulate_day(brand.key, brand.source_database, day)
+            # The storefront's clickstream file for the day, after the day is in the CRM
+            counts = {**counts, "clickstream_lines": clickstream.export_day(brand, day).get("lines", 0)}
+            for key, value in counts.items():
+                total[key] = total.get(key, 0) + value
+        day += timedelta(days=1)
+    return total
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="python -m crm_pipeline.simulator",
+        description="Write a range of days of shop activity, and their clickstream files (demo only).")
+    parser.add_argument("--from", dest="first", type=date.fromisoformat, required=True, metavar="YYYY-MM-DD")
+    parser.add_argument("--to", dest="last", type=date.fromisoformat, required=True, metavar="YYYY-MM-DD")
+    args = parser.parse_args(argv)
+    # A day is written once, so one that is not over yet would stay partial for good
+    yesterday = datetime.now(ZoneInfo(TIMEZONE)).date() - timedelta(days=1)
+    if args.last > yesterday:
+        parser.error(f"--to {args.last} is after yesterday ({yesterday}, {TIMEZONE}): only days that are over "
+                     "can be written")
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    total = simulate_range(args.first, args.last)
+    days = max((args.last - args.first).days + 1, 0)
+    print(f"Shop activity {args.first}..{args.last}: {days} days, "
+          + (", ".join(f"{value:,} {key}" for key, value in sorted(total.items())) or "nothing to write"))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

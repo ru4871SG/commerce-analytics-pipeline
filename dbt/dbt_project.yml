@@ -22,6 +22,22 @@ vars:
   # day, cancellation day, refund day, the as-of date) is the New York calendar day. Keep it in
   # step with TIMEZONE in dags/crm_pipeline/config.py, which schedules the pipeline.
   business_timezone: America/New_York
+  # exec_kpi_anomalies: a brand's day is unusual for a metric when it is far from the median of
+  # the same weekday in the weeks before.
+  anomaly_window_days: 90 # the days the table holds, ending on the as-of date
+  anomaly_comparison_weeks: 8 # how many earlier same-weekdays make the baseline
+  anomaly_min_comparison_days: 6 # with fewer of them there is no baseline to trust
+  anomaly_z_threshold: 3.5
+  # The smallest difference from the usual value that can be flagged, per metric, in the metric's
+  # own unit (USD at constant rates, or a count).
+  anomaly_min_difference:
+    revenue_usd: 300
+    contribution_margin_usd: 175
+    revenue_orders: 6
+    new_customers: 4
+    new_subscriptions: 4
+    canceled_subscriptions: 3
+    ad_spend_usd: 12
 
 # Medallion layers. Bronze is the RAW database: the Airflow loader or the Dagster job writes
 # RAW.CRM and dbt only reads it (models/bronze/_sources.yml). dbt builds silver and gold in
@@ -41,3 +57,6 @@ models:
       +schema: gold
       +materialized: table
       +tags: ["gold"]
+      reporting:
+        +contract:
+          enforced: true

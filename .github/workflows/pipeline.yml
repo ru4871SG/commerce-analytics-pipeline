@@ -1,0 +1,116 @@
+# The whole pipeline on the emulators, for every pull request and every push to main
+name: pipeline
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pipeline-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }} # a newer push replaces the run
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 #
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Lint (scripts/local.sh lint, against the base commit)
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: scripts/local.sh lint "$BASE"
+
+  pipeline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+    env:
+      CRM_CONTAINER_ENGINE: docker
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install every environment (scripts/local.sh install)
+        run: scripts/local.sh install
+      - name: Tests, in the Airflow, Dagster and Spark environments
+        run: scripts/local.sh test
+      - name: The fixed scenario, under Airflow and then Dagster
+        run: scripts/local.sh ci-scenario --reset
+      - name: Every dashboard chart, through Superset
+        run: scripts/local.sh dashboard check
+      - name: Main's gold fingerprint, from its latest successful run
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow pipeline.yml --branch main --event push \
+            --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+          if [ -z "$run_id" ]; then
+            echo "No successful run of this workflow on main yet: nothing to compare with."
+          elif ! gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name gold-fingerprint --dir "$RUNNER_TEMP/base"; then
+            echo "Run $run_id on main has no gold-fingerprint artifact any more: nothing to compare with."
+          fi
+      - name: Summary, with the gold diff against main
+        if: always()
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            scripts/local.sh ci-summary "$RUNNER_TEMP/base/gold-airflow.json" >> "$GITHUB_STEP_SUMMARY"
+          else
+            scripts/local.sh ci-summary >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Keep the logs and both fingerprints
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pipeline-scenario
+          path: |
+            .local/ci-scenario/
+            .local/*.log
+          include-hidden-files: true
+          if-no-files-found: ignore
+      - name: Publish main's gold fingerprint, for pull requests to compare with
+        if: github.event_name == 'push' # only after every step above passed
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gold-fingerprint
+          path: .local/ci-scenario/gold-airflow.json
+          include-hidden-files: true
+          if-no-files-found: error
+      - name: The site of this run (scripts/local.sh site)
+        if: github.event_name == 'push' && vars.PUBLISH_SITE == 'true'
+        env:
+          CRM_SITE_BROWSER_DEPS: "true"
+        run: scripts/local.sh site
+      - name: Hand the site to the pages job
+        if: github.event_name == 'push' && vars.PUBLISH_SITE == 'true'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: .local/site
+
+  pages:
+    needs: pipeline
+    if: github.event_name == 'push' && vars.PUBLISH_SITE == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy the site to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

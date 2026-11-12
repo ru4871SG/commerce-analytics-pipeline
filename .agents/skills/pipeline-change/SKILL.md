@@ -13,6 +13,11 @@ This repo runs two pipelines on one schedule and joins them in gold:
 - **Clickstream:** landing files, then the gate, then pandas or Spark, then Delta bronze, silver
   and gold, then `RAW.WEB`, which dbt reads.
 
+Beside them run the **side loads**: steps that feed dbt and that the report never waits for. The
+first is the ECB's exchange rates, a public REST API, into `RAW.REF.FX_RATES`. The second is the
+change data capture of the orders table: PostgreSQL's write-ahead log, decoded by wal2json,
+into `RAW.CRM.ORDERS_CDC`, beside the loader and never into its tables.
+
 Superset reads the `exec_*` tables, and the activation job posts the digest. Airflow (the default)
 and Dagster run the same helpers in `dags/crm_pipeline/` and `lakehouse/src/crm_lakehouse/`, one at
 a time. The state they share lives outside them. Locally, fakesnow stands in for Snowflake, a folder
@@ -69,18 +74,27 @@ date by every change: see step 12).
      `dagster/dagster_crm/`? Both call one helper with no Airflow import.
    - **Critical path:** anything upstream of `dbt_build` (Airflow), or of a dbt source asset
      (Dagster), can stop gold. Decide on purpose whether the new step may block the CRM report,
-     and write that down.
+     and write that down. A step that must not block it is a side load: follow "Adding a side
+     load" in the change map (its own Dagster job, its table created by the dbt step, its
+     models' tests at `warn`).
    - **Shared state:**
      - `RAW.CRM.<TABLE>_CHANGES` (the watermarks)
      - `_STREAM_OFFSETS`, `_TASK_HISTORY` and `_SOURCE_FIGURES`
      - the lakehouse batch ledger
+     - the side loads' tables (`RAW.REF.FX_RATES`: append-only, each rate stored once;
+       `RAW.CRM.ORDERS_CDC`: append-only, each change stored once)
+     - the source's replication slots (`cdc_<database>`): only the capture moves them, and one
+       that nobody reads keeps the server's log files
      - `.local/last_orchestrator`
 
      Only one run at a time; never add a second writer.
 
    - **Contracts:**
      - dbt sources and their freshness (`dbt/models/bronze/_sources.yml`)
-     - the `exec_*` columns Superset reads (`local/superset/build_bundle.py`)
+     - the `exec_*` columns Superset reads: their enforced dbt contracts
+       (`dbt/models/gold/reporting/_reporting.yml`), the datasets and charts
+       (`local/superset/build_bundle.py`) and the exposure (`_exposures.yml`), which
+       `tests/test_dashboard_contract.py` holds together
      - the brand registry (`dbt/seeds/brands.csv`)
      - the lakehouse contract (`lakehouse/src/crm_lakehouse/contract.py`) and the deployed job's
        contract fingerprint
@@ -91,14 +105,17 @@ date by every change: see step 12).
      - `lakehouse/setup/unity_catalog.sql`
      - `lakehouse/databricks.yml` and `lakehouse/resources/`
      - `.env.example`
-     - `.github/workflows/lakehouse.yml`
+     - `.github/workflows/lakehouse.yml` and `.github/workflows/pipeline.yml` (its commands run
+       locally; the workflow itself, and its `pages` job, run only on GitHub)
+     - `.devcontainer/` (a Codespace is GitHub's; locally it runs through the Dev Containers CLI,
+       on a copy of the tree: see the pitfalls)
 
 4. **Make a small, focused change.**
    - **Where you work:** in the checkout as the person left it, on whatever branch is checked out.
      Do not create, switch, update or delete branches. Every change stays uncommitted in the
      working tree.
-   - **Scope:** fix the root cause and keep existing behavior. Do no unrelated cleanup: the
-     baseline has known lint findings, so leave them.
+   - **Scope:** fix the root cause and keep existing behavior. Do no unrelated cleanup: note
+     what you find in the plan instead.
    - **Where code goes:** shared logic belongs in `dags/crm_pipeline/` or `crm_lakehouse`, never in
      a DAG file or a Dagster module.
    - **Style:** match the file around you: a module docstring that says why, plain names, the
@@ -110,7 +127,9 @@ date by every change: see step 12).
      git-ignored `.env`). Never put them in code, logs, tests, bundles, evidence or the handover.
      Extend `tests/test_secret_handling.py` for any new setting that carries a secret.
    - **README and diagram:** update the README sections and `docs/pipeline.svg` as part of the
-     same change (the change map names them).
+     same change (the change map names them). After a change to the dashboard, refresh the
+     README's picture of it too: run `scripts/local.sh site`, look at `.local/site/dashboard.png`,
+     and copy it over `docs/superset_example.png`.
 
 5. **Run the local checks and the regression baseline.** Capture the baseline _before the first
    edit_, from the checkout as you found it. If you edited before capturing it, do not undo your
@@ -128,9 +147,8 @@ date by every change: see step 12).
    scripts/local.sh lakehouse status > "$B/lakehouse-before.txt"
 
    # After: with your changes in the working tree
-   bash -n scripts/local.sh && uvx --from shellcheck-py shellcheck scripts/local.sh
-   uvx ruff check --select F --target-version py312 <changed .py files>    # no new findings
-   uvx --from actionlint-py actionlint .github/workflows/*.yml             # if a workflow changed
+   scripts/local.sh lint            # what CI's lint job runs, with its pinned tools: bash -n, shellcheck,
+                                    # actionlint, ruff (no new finding), sqlfluff on the changed dbt files
    scripts/local.sh test 2>&1 | tail -30 > "$B/test-after.txt"             # .venv, .venv-dagster, .venv-spark
    scripts/local.sh airflow dags list-import-errors                        # "No data found"
    scripts/local.sh dagster definitions validate                           # "All code locations passed validation."
@@ -147,6 +165,13 @@ date by every change: see step 12).
    view, and any bronze, silver or `RAW.WEB` table you touched, directly (see "Reading the
    warehouse" in the change map).
 
+   CI runs a different run from this baseline: `scripts/local.sh ci-scenario --reset`, the fixed
+   scenario (the seed, then 2026-10-01 to 2026-10-03, under Airflow and then Dagster). Run it
+   yourself when the change touches `scripts/local.sh`, the first load, the simulator's days or
+   the scenario. It removes the local simulated days, the warehouse and the lakehouse: tell the
+   person first, and restore with `scripts/local.sh airflow demo` afterwards. The fingerprint
+   must then equal the one you had before the reset.
+
    Then check that each run did its work: read the logs, not the exit codes.
 
    ```bash
@@ -156,6 +181,8 @@ date by every change: see step 12).
      grep -c 'rows in the source, .* in bronze' "$log"
      grep -oE 'MERGE_[A-Z_]+ (succeeded|skipped)' "$log" | sort | uniq -c
      grep -oE 'Clickstream: [a-z]+[^[]{0,80}' "$log" | head -3
+     grep -oE 'FX rates: (skipped|up to date|asked)[^[]{0,120}' "$log" | head -1   # the side load ran
+     grep -oE 'CDC orders: ([a-z0-9_]+ (captured|has nothing new)|skipped)[^[]{0,160}' "$log" | sort -u   # one line per brand
      grep -oE 'Done\. PASS=[0-9]+ WARN=[0-9]+ ERROR=[0-9]+' "$log"
      grep -nE 'Nothing to do|Traceback|ERROR=[1-9]|FAILURE' "$log" | head
    done
@@ -231,8 +258,14 @@ date by every change: see step 12).
      their numbers (test counts, dbt `PASS`, the fingerprint diffs, the chart check), the new
      part's own proof, the risks and limits, the README sections and diagram updated, and the
      pitfalls added.
-   - **What CI checks:** `.github/workflows/lakehouse.yml` covers only the lakehouse paths.
-     Everything else rests on your local evidence, so summarize it here (never secrets).
+   - **What CI checks:** `.github/workflows/pipeline.yml` runs for every pull request: the lint,
+     the tests, and the fixed scenario under both orchestrators, with a parity check and the
+     gold diff against `main` in the job summary. `.github/workflows/lakehouse.yml` covers the
+     lakehouse paths. On a push to `main`, when the repository variable `PUBLISH_SITE` is
+     `true`, it also publishes the site of that run to GitHub Pages. CI runs three simulated
+     days, not today's data, and it cannot show what the new part proves on its own, so your
+     local evidence still goes here (never secrets): the baseline, the fingerprint diffs, and
+     the new part's proof.
 
    Then tell the user, in a few lines, what you did and where the handover is. If review comments
    come back, make the changes locally, re-run the affected checks, and update the evidence and
@@ -241,12 +274,13 @@ date by every change: see step 12).
 9. **Leave review and merge to people.** A person opens the pull request, CI runs, and reviewers
    review and merge. A green build is not authorization, and once the repository variable
    `DATABRICKS_HOST` is set, a merge into `main` also starts the lakehouse workflow's production
-   release. Flag in the handover anything that needs a closer review:
+   release, and once `PUBLISH_SITE` is `true` it publishes the site. Flag in the handover
+   anything that needs a closer review:
    - changes to shared state
    - credentials, grants or service principals
    - the report's critical path
    - deleting data
-   - the release or deploy scripts, or the workflow
+   - the release or deploy scripts, or a workflow
 
 10. **Deploy through the controlled process, locally only.** Run
     `scripts/local.sh lakehouse deploy -t local`.
@@ -272,7 +306,9 @@ date by every change: see step 12).
 
       It must end "All charts returned data", with the Brand filter covering every chart.
 
-    - **Status:** run `scripts/local.sh status` and `scripts/local.sh lakehouse status`.
+    - **Status:** run `scripts/local.sh status` and `scripts/local.sh lakehouse status`. Each
+      CDC slot must be `reserved` and behind by kilobytes at most (what the server wrote since the
+      last capture), never megabytes; no slot but the brands' may be left.
     - **The new part:** show its proof, as named in the acceptance criteria.
 
 12. **Retain evidence and close the work.**
@@ -280,7 +316,9 @@ date by every change: see step 12).
       handover.
     - **Stop what you started:** Superset, then `scripts/local.sh lakehouse workspace down`. Run
       `scripts/local.sh down` if the services were stopped when you began.
-    - **Remove:** scratch lakehouses and folders, and a stale `.local/orchestrator.lock`.
+    - **Remove:** scratch lakehouses and folders, a scratch database with its replication slot,
+      scratch containers, their volumes and images (each by its name, never with a `prune`),
+      and a stale `.local/orchestrator.lock`.
     - **Check:** `git status` shows only your changes and the ones that were there before, and
       nothing is committed.
     - **Record new pitfalls:** if the work hit a trap that
@@ -322,6 +360,14 @@ date by every change: see step 12).
 - Deploy only to `-t local`. Never deploy to `dev` or `prod`.
 - Never leave a part of `docs/pipeline.svg`, or a count in the README or this skill, that the
   change made wrong.
+- Never leave a replication slot behind, and never read or move a brand's slot by hand: an
+  abandoned slot keeps the server's log files until it is invalidated, and a slot moved by hand
+  loses changes for good.
+- Never edit `scripts/local.sh` while one of its commands is running: bash reads the file as it
+  goes, and the command runs on into whatever text is at its old place.
+- Never clean up with a `prune` (`podman image prune`, `system prune`, `volume prune`), or by a
+  pattern that can match what you did not make: the container store holds other projects'
+  images, containers and volumes. Remove what you created, by its name or ID.
 - Never fix unrelated findings in passing. Note them in the plan instead.
 
 ## You can only claim the work is done, if it means:
@@ -329,16 +375,19 @@ date by every change: see step 12).
 - [ ] The plan exists, with acceptance criteria, and each one is met with evidence.
 - [ ] `scripts/local.sh test` passes in all three environments, with new tests for the change
       (behavior, graph shape, the nothing-to-do and failure paths).
-- [ ] shellcheck and actionlint are clean; ruff shows no new findings in the changed files.
+- [ ] `scripts/local.sh lint` passes: shellcheck and actionlint are clean, ruff shows no new
+      finding in the changed files, and sqlfluff passes on the changed dbt files.
 - [ ] `airflow dags list-import-errors` finds nothing; `dagster definitions validate` passes.
 - [ ] The Airflow and Dagster runs both show freshness, reconciliation, merges, the clickstream
-      plan and dbt `ERROR=0` in their logs, and their gold fingerprints are identical.
+      plan, the side loads and dbt `ERROR=0` in their logs, and their gold fingerprints are
+      identical.
 - [ ] The gold fingerprint differs from the baseline only where intended, and each difference is
       explained.
 - [ ] The dashboard check passes against the new gold.
 - [ ] If the lakehouse changed, the release (`--allow-dirty`), deploy and verify all pass for
       `-t local`, and the version is bumped for new code.
-- [ ] The README, `docs/pipeline.svg` and the counts match the code (see the change map).
+- [ ] The README, `docs/pipeline.svg` and the counts match the code (see the change map), and
+      `docs/superset_example.png` shows the dashboard as it is now.
 - [ ] Every new trap the work hit is in `references/known-pitfalls.md`, and no entry there is made
       wrong by the change.
 - [ ] No secrets in the changes, and every changed requirements section is audited.

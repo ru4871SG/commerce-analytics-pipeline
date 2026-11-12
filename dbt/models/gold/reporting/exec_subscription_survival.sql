@@ -48,14 +48,15 @@ curve as (
 
 )
 
+-- Each column is cast to its contract type (_reporting.yml)
 select
-    curve.brand,
-    brands.brand_name,
-    curve.day_offset,
-    curve.subscriptions,
-    curve.active_subscriptions,
-    curve.active_subscriptions / nullif(curve.subscriptions, 0)     as subscribers_left_rate,
-    1 - curve.active_subscriptions / nullif(curve.subscriptions, 0) as canceled_rate
+    curve.brand::varchar                                                        as brand,
+    brands.brand_name::varchar                                                  as brand_name,
+    curve.day_offset::int                                                       as day_offset,
+    curve.subscriptions::int                                                    as subscriptions,
+    curve.active_subscriptions::int                                             as active_subscriptions,
+    (curve.active_subscriptions / nullif(curve.subscriptions, 0))::float        as subscribers_left_rate,
+    (1 - curve.active_subscriptions / nullif(curve.subscriptions, 0))::float    as canceled_rate
 from curve
 inner join {{ ref('brands') }} as brands
     on curve.brand = brands.brand

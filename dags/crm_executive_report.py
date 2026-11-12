@@ -9,7 +9,7 @@ import pendulum
 from airflow.sdk import CronTriggerTimetable, Param, TaskGroup, TriggerRule, dag, get_current_context, task
 from airflow.sdk.exceptions import AirflowFailException, AirflowSkipException
 
-from crm_pipeline import bronze_loader, export_api, lakehouse, source_postgres, stream_task
+from crm_pipeline import bronze_loader, cdc, export_api, fx_rates, lakehouse, source_postgres, stream_task
 from crm_pipeline.assets import ACTIVITY, GOLD
 from crm_pipeline.config import INCREMENTAL_TABLES, SIMULATE_ACTIVITY, SOURCE_TABLES, TIMEZONE, brands_to_extract
 from crm_pipeline.dbt import dbt_task
@@ -104,6 +104,25 @@ def publish_web_funnel(plan: dict) -> dict:
         return lakehouse.publish(plan, snowflake)
 
 
+@task(execution_timeout=timedelta(minutes=10))
+def load_fx_rates() -> dict:
+    """The ECB's exchange rates for the days after the latest one."""
+    result = fx_rates.load()
+    if result["state"] == "SKIPPED":
+        raise AirflowSkipException(result["reason"])
+    return result
+
+
+@task(execution_timeout=timedelta(minutes=30))
+def capture_orders_cdc(brand_key: str, database: str) -> dict:
+    """Every insert, update and delete of the brand's orders since its replication slot was last
+    read, from PostgreSQL's write-ahead log, appended to RAW.CRM.ORDERS_CDC."""
+    result = cdc.capture(brand_key, database)
+    if result["state"] == "SKIPPED":
+        raise AirflowSkipException(result["reason"])
+    return result
+
+
 @dag(
     dag_id="crm_executive_report",
     schedule=[ACTIVITY] if SIMULATE_ACTIVITY else CronTriggerTimetable("30 7 * * *", timezone=TIMEZONE),
@@ -128,7 +147,7 @@ def publish_web_funnel(plan: dict) -> dict:
             description="The engine for the clickstream batch: auto lets the gate choose from the batch's size.",
         ),
     },
-    tags=["crm", "snowflake", "dbt", "lakehouse", "executive-report"],
+    tags=["crm", "snowflake", "dbt", "lakehouse", "side-loads", "executive-report"],
     doc_md=__doc__,
 )
 def crm_executive_report():
@@ -152,6 +171,14 @@ def crm_executive_report():
         [in_process, on_spark] >> published
     # dbt does not wait for the publish: a failed batch fails the run, not the report. dbt reads
     # whatever RAW.WEB holds; a day published after it did reaches gold with the next run.
+
+    with TaskGroup(group_id="side_loads",
+                   tooltip="Loads that feed dbt and that nothing waits for (crm_pipeline/raw_tables.py)"):
+        load_fx_rates()
+        # The CDC of orders reads a brand's write-ahead log once the loader has copied that brand
+        for brand, loaded in zip(brands_to_extract(), loads):
+            loaded >> capture_orders_cdc.override(task_id=f"capture_orders_cdc_{brand.key}")(
+                brand.key, brand.source_database)
 
     if loads:
         with TaskGroup(group_id="streams_and_tasks",

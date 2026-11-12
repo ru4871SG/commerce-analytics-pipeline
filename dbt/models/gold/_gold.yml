@@ -55,6 +55,93 @@ models:
                 to: ref('dim_brands')
                 field: brand_key
 
+  - name: dim_subscriptions
+    description: >
+      One row per paid subscription (fct_orders.is_paid_subscription): when it started and
+      ended, whether it is active at the as-of date, its renewals, and what it is worth a month.
+      The row is the subscription's first order. exec_mrr_movements and exec_mrr_monthly are
+      built from it.
+    data_tests:
+      # A subscription cannot end before it started
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "ended_on is null or ended_on >= started_on"
+      # No renewal, no date of one; and a renewal comes after the start
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "(renewals_count = 0) = (last_renewal_date is null) and coalesce(last_renewal_date >= started_on, true)"
+    columns:
+      - name: subscription_key
+        description: The order_key of the subscription's first order. Its renewals are the orders whose renewal_of_order_key is this key.
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_orders')
+                field: order_key
+      - name: brand_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_brands')
+                field: brand_key
+      - name: customer_key
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_key
+      - name: product_variant_key
+        description: The variant that renews. The Subscribe line of the first order, or its first line when it has none.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_products')
+                field: product_variant_key
+      - name: started_on
+        description: New York day of the first order.
+        data_tests: [not_null]
+      - name: ended_on
+        description: >
+          New York day of the cancellation; NULL while the subscription runs. One cancelled with
+          no date, or before it started, ends on the day it started and is never active (the
+          rule of exec_active_subscriptions_weekly).
+      - name: is_active
+        description: Running at the as-of date. Started on or before it, and not ended by it.
+        data_tests: [not_null]
+      - name: is_paused
+        description: The source's pause flag as it is now. It has no date, and a paused subscription keeps renewing.
+        data_tests: [not_null]
+      - name: is_reactivation
+        description: The customer had subscribed before, and none of those subscriptions was still running on the day this one started.
+        data_tests: [not_null]
+      - name: renewals_count
+        description: Paid renewal orders up to the as-of date. One that was cancelled or awaits payment is not a renewal.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: last_renewal_date
+        description: New York day of the latest paid renewal. NULL when there is none.
+      - name: recurring_amount
+        description: One unit of the subscription's line at its unit price, VAT removed, in the brand's currency. What a renewal charges before a discount.
+        data_tests: [not_null]
+      - name: mrr_usd
+        description: >
+          recurring_amount in USD at the brand's constant-currency rate, a month. The first
+          order's extra units, upsell line, shipping and line discounts are not recurring. Adds
+          up across brands.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: false
+
   - name: fct_orders
     description: >
       One row per non-cart order from a customer who is not a test account. Replaces the
@@ -100,6 +187,17 @@ models:
       - name: gross_sales_usd
         description: gross_sales in USD at the brand's constant-currency rate. Adds up across brands.
         data_tests: [not_null]
+      - name: usd_rate_actual
+        description: >
+          US dollars per unit of the order's currency on the order's day: the ECB's latest rate
+          published on or before it (int_fx_rates_daily). 1 for an order in USD.
+        data_tests:
+          # The rates come from a side load: an order with none must show, not stop gold
+          - not_null:
+              config:
+                severity: warn
+      - name: gross_sales_usd_actual
+        description: gross_sales in USD at usd_rate_actual, the rate of the order's day. Adds up across brands.
       - name: margin_before_refunds_usd
         description: margin_before_refunds in USD at the brand's constant-currency rate. Adds up across brands.
         data_tests: [not_null]
@@ -171,6 +269,12 @@ models:
       - name: refund_amount_usd
         description: The refund without VAT, in USD at the brand's constant-currency rate. Adds up across brands.
         data_tests: [not_null]
+      - name: refund_amount_usd_actual
+        description: The refund without VAT, in USD at the ECB's rate of the day it was issued (int_fx_rates_daily).
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
       - name: reduces_revenue
         description: A completed refund of a revenue order. These come off revenue and contribution margin on issued_date.
         data_tests: [not_null]
@@ -309,6 +413,52 @@ models:
       - name: valid_from
         data_tests: [not_null]
 
+  # Built from the change data capture, a side load: every test warns, so none can fail the build
+  - name: fct_order_change_events
+    description: >
+      One row per change of an order that the change data capture read from PostgreSQL's
+      write-ahead log: every insert, update and delete in the order they happened, with the
+      state the order was in before. Unlike fct_order_state_history, built from the loader's
+      change log, it has the states an order passed through between two loads, and the orders
+      deleted in the source. It starts when a brand's replication slot is created, and is empty
+      until the first capture. No report table reads it.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [brand, order_id, change_sequence]
+          config:
+            severity: warn
+    columns:
+      - name: order_change_key
+        data_tests:
+          - unique:
+              config:
+                severity: warn
+          - not_null:
+              config:
+                severity: warn
+      - name: order_key
+        description: >
+          fct_orders' key of the order, computed and not joined: an order deleted in the source,
+          a cart or a test account has events here and no row in fct_orders.
+      - name: change_sequence
+        description: 1 for the first captured change of the order, 2 for the next, in the order of the log.
+      - name: operation
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["insert", "update", "delete"]
+              config:
+                severity: warn
+      - name: is_delete
+        description: The row was deleted in the source. Its state columns are NULL; previous_* say what was deleted.
+      - name: lsn
+        description: The change's place in the write-ahead log, as PostgreSQL writes it.
+      - name: committed_at
+        description: When the transaction that made the change committed, UTC. The only time a delete has.
+      - name: previous_state
+        description: The order's state before this change. NULL for the first captured change of an order.
+
 unit_tests:
   - name: cost_of_order_charges_fixed_costs_on_the_first_item_only
     description: >
@@ -372,6 +522,9 @@ unit_tests:
           - {brand: broomx, order_id: 101, cost_of_order_cents: 0}
           - {brand: broomx, order_id: 103, cost_of_order_cents: 0}
       - input: ref('int_order_first_items')
+        rows: []
+      # No rate: usd_rate_actual and gross_sales_usd_actual are NULL, and nothing else changes
+      - input: ref('int_fx_rates_daily')
         rows: []
       - input: ref('stg_crm__refund_payments')
         rows:

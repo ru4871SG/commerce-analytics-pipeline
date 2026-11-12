@@ -13,10 +13,15 @@ from crm_lakehouse.layout import Lakehouse
 from crm_pipeline import connections
 from crm_pipeline.bronze_schema import identifier
 from crm_pipeline.config import (
-    BRONZE_DATABASE, DATABRICKS_CONN_ID, LAKEHOUSE_CATALOG, LAKEHOUSE_ROOT, LOCAL_WORKSPACE, PANDAS_BUDGET_BYTES,
-    SPARK_PYTHON, WEB_SCHEMA,
+    DATABRICKS_CONN_ID, LAKEHOUSE_CATALOG, LAKEHOUSE_ROOT, LOCAL_WORKSPACE, PANDAS_BUDGET_BYTES, SPARK_PYTHON,
 )
 from crm_pipeline.errors import PermanentError
+# The two tables and their columns are defined with the other tables dbt does not wait for: the
+# dbt step creates them too, so a first batch that fails still leaves dbt its sources
+from crm_pipeline.raw_tables import (
+    WEB_BATCH_COLUMNS as BATCH_COLUMNS, WEB_BATCHES_TABLE as BATCHES_TABLE, WEB_FUNNEL_TABLE as FUNNEL_TABLE,
+    create_side_tables,
+)
 
 log = logging.getLogger(__name__)
 
@@ -24,15 +29,7 @@ DEFAULT_JOB_NAME = "web_events_spark"
 INSERT_BATCH_ROWS = 500
 HELD_CHUNK = 1_000          # batch ids per lookup in RAW.WEB.EVENT_BATCHES
 
-FUNNEL_TABLE = "daily_funnel"
-BATCHES_TABLE = "event_batches"
 FUNNEL_COLUMNS = [column.name for column in GOLD_FUNNEL.columns]
-BATCH_COLUMNS = ("batch_id", "engine", "reason", "files", "compressed_bytes", "estimated_rows",
-                 "estimated_pandas_bytes", "budget_bytes", "bronze_rows", "silver_inserted", "dropped_json",
-                 "gold_from", "gold_to", "gold_rows", "observed_pandas_bytes", "seconds", "contract",
-                 "orchestrator", "run_id", "planned_at", "succeeded_at")
-SNOWFLAKE_TYPES = {"string": "VARCHAR", "bigint": "NUMBER(38, 0)", "double": "FLOAT", "date": "DATE",
-                   "timestamp": "TIMESTAMP_NTZ"}
 
 
 # --- where the lakehouse is ----------------------------------------------------------------
@@ -138,28 +135,11 @@ def _latest(batch_id: str) -> dict:
     return _plain(latest)
 
 
-def _qualified(table: str) -> str:
-    return f"{BRONZE_DATABASE}.{WEB_SCHEMA}.{identifier(table)}"
-
-
-def ensure_web_tables(cursor) -> None:
-    """RAW.WEB and its two tables, when they are missing."""
-    cursor.execute(f"create schema if not exists {BRONZE_DATABASE}.{WEB_SCHEMA}")
-    funnel = ", ".join(f"{identifier(c.name)} {SNOWFLAKE_TYPES[c.type]}" for c in GOLD_FUNNEL.columns)
-    cursor.execute(f"create table if not exists {_qualified(FUNNEL_TABLE)} ({funnel}, _LOADED_AT TIMESTAMP_NTZ)")
-    types = {**{name: "NUMBER(38, 0)" for name in BATCH_COLUMNS}, "seconds": "FLOAT", "gold_from": "DATE",
-             "gold_to": "DATE", "planned_at": "TIMESTAMP_NTZ", "succeeded_at": "TIMESTAMP_NTZ",
-             **{name: "VARCHAR" for name in ("batch_id", "engine", "reason", "dropped_json", "contract",
-                                             "orchestrator", "run_id")}}
-    batches = ", ".join(f"{identifier(name)} {types[name]}" for name in BATCH_COLUMNS)
-    cursor.execute(f"create table if not exists {_qualified(BATCHES_TABLE)} ({batches}, _LOADED_AT TIMESTAMP_NTZ)")
-
-
 def _insert(cursor, table: str, columns, rows: list[tuple]) -> None:
     placeholders = ", ".join(["%s"] * (len(columns) + 1))
     names = ", ".join(identifier(name) for name in columns) + ", _LOADED_AT"
     for start in range(0, len(rows), INSERT_BATCH_ROWS):
-        cursor.executemany(f"insert into {_qualified(table)} ({names}) values ({placeholders})",
+        cursor.executemany(f"insert into {table} ({names}) values ({placeholders})",
                            rows[start:start + INSERT_BATCH_ROWS])
 
 
@@ -184,11 +164,11 @@ def _copy_batch(lakehouse: Lakehouse, rows: list[dict], batch_id: str, cursor) -
     cursor.execute("begin")
     try:
         if first is not None:
-            cursor.execute(f"delete from {_qualified(FUNNEL_TABLE)} where BUSINESS_DATE between %s and %s",
+            cursor.execute(f"delete from {FUNNEL_TABLE} where BUSINESS_DATE between %s and %s",
                            (first, last))
             _insert(cursor, FUNNEL_TABLE, FUNNEL_COLUMNS,
                     [tuple(row[name] for name in FUNNEL_COLUMNS) + (loaded_at,) for row in gold])
-        cursor.execute(f"delete from {_qualified(BATCHES_TABLE)} where BATCH_ID = %s", (batch_id,))
+        cursor.execute(f"delete from {BATCHES_TABLE} where BATCH_ID = %s", (batch_id,))
         _insert(cursor, BATCHES_TABLE, BATCH_COLUMNS,
                 [tuple(_naive_utc(summary.get(name)) for name in BATCH_COLUMNS) + (loaded_at,)])
         cursor.execute("commit")
@@ -204,7 +184,7 @@ def _held_batches(cursor, batch_ids: list[str]) -> set[str]:
     held = set()
     for start in range(0, len(batch_ids), HELD_CHUNK):
         chunk = batch_ids[start:start + HELD_CHUNK]
-        cursor.execute(f"select BATCH_ID from {_qualified(BATCHES_TABLE)} "
+        cursor.execute(f"select BATCH_ID from {BATCHES_TABLE} "
                        f"where BATCH_ID in ({', '.join(['%s'] * len(chunk))})", chunk)
         held.update(row[0] for row in cursor.fetchall())
     return held
@@ -235,8 +215,8 @@ def publish(plan_values: dict, snowflake_conn) -> dict:
     rows = planning.ledger(lakehouse)
     cursor = snowflake_conn.cursor()
     try:
-        # The tables exist from the first run on, so dbt's sources do even before any clickstream
-        ensure_web_tables(cursor)
+        # Before anything is copied; the dbt step creates the same tables when it runs first
+        create_side_tables(cursor)
         republished = republish_missing(lakehouse, rows, cursor)
         if plan_values["action"] == "nothing" or not batch_id:
             log.info("Clickstream: nothing to publish (%s).", plan_values["reason"])

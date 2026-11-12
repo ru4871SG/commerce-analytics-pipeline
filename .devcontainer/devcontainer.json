@@ -1,0 +1,49 @@
+// The whole demo in one container, with nothing to install on the machine that opens it: a
+// GitHub Codespace, or VS Code's "Reopen in Container". See "See it without installing" and
+// section 4 of the README.
+//
+// Comments are on lines of their own, so that tests/test_devcontainer.py can read the file.
+{
+  "name": "Commerce Analytics Pipeline",
+
+  // Ubuntu 24.04 with uv and Java 21, each pinned by digest (Dockerfile)
+  "build": { "dockerfile": "Dockerfile" },
+
+  // Docker inside the container: scripts/local.sh runs PostgreSQL, the CRM databases, in a
+  // container of its own, and builds that container's image. The feature makes this container
+  // privileged and starts the daemon. Its version is exact, and devcontainer-lock.json holds
+  // the hash of what that version is.
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:4.1.3": {}
+  },
+
+  // Every virtualenv, the Databricks CLI, the dbt packages, Airflow's and Superset's metadata,
+  // a first start of Spark: five to ten minutes, once, when the container is created.
+  // Afterwards `scripts/local.sh fullrun --no-browser` runs the demo.
+  "postCreateCommand": "scripts/local.sh install",
+
+  // In a container, `scripts/local.sh site` may install what its browser needs (it takes root)
+  "containerEnv": { "CRM_SITE_BROWSER_DEPS": "true" },
+
+  // The four UIs. Each listens on the container's localhost, which is what a forwarded port
+  // reaches. The passwords of Superset and Airflow are in .env (admin), as on a laptop.
+  "forwardPorts": [8088, 8080, 3000, 8770],
+  "portsAttributes": {
+    "8088": { "label": "Superset: the Executive Report", "onAutoForward": "notify" },
+    "8080": { "label": "Airflow", "onAutoForward": "notify" },
+    "3000": { "label": "Dagster", "onAutoForward": "notify" },
+    "8770": { "label": "Local Databricks workspace", "onAutoForward": "notify" },
+    "5433": { "label": "PostgreSQL: the CRM databases (no UI)", "onAutoForward": "ignore" },
+    "64616": { "label": "fakesnow: the Snowflake emulator (no UI)", "onAutoForward": "ignore" }
+  },
+  // Airflow, Spark and the test suites open ports of their own while they work
+  "otherPortsAttributes": { "onAutoForward": "ignore" },
+
+  // The first load runs Spark over the clickstream history beside the loads into the emulator.
+  // The disk holds six virtualenvs, uv's cache, the lakehouse and the inner Docker's images.
+  "hostRequirements": { "cpus": 4, "memory": "16gb", "storage": "32gb" },
+
+  "customizations": {
+    "codespaces": { "openFiles": ["README.md"] }
+  }
+}

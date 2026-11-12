@@ -2,14 +2,16 @@
 connection is needed."""
 import shlex
 import sys
+from types import SimpleNamespace
 
 import pytest
 
 pytest.importorskip("airflow")
 
-from crm_pipeline import dbt
+from crm_pipeline import cdc, dbt, fx_rates
 from crm_pipeline.assets import ACTIVITY, GOLD
 from crm_pipeline.config import INCREMENTAL_TABLES, brands_to_extract
+from crm_pipeline.errors import PermanentError
 
 
 def test_every_dag_imports(dagbag):
@@ -102,6 +104,88 @@ def test_the_gate_branches_to_one_engine_then_publishes(dag):
     # The lakehouse does not wait for the CRM, nor the CRM for it
     assert dag.get_task("lakehouse.plan_web_batch").upstream_task_ids == set()
     assert publish.downstream_task_ids == set()
+
+
+def test_the_fx_load_is_a_side_branch_that_nothing_waits_for(dag):
+    group = {task.task_id for task in dag.tasks if task.task_id.startswith("side_loads.")}
+    assert group == {"side_loads.load_fx_rates"} | {
+        f"side_loads.capture_orders_cdc_{brand.key}" for brand in brands_to_extract()}
+    load = dag.get_task("side_loads.load_fx_rates")
+    # It waits for nothing, and nothing waits for it: when it fails, the run fails and the report
+    # is still built, with the last exchange rate carried forward
+    assert load.upstream_task_ids == set()
+    assert load.downstream_task_ids == set()
+    assert dag.get_task("dbt_build").upstream_task_ids == {"reconcile_bronze"}
+
+
+def test_without_its_connection_the_fx_load_is_skipped_not_failed(dag, monkeypatch):
+    from airflow.sdk.exceptions import AirflowSkipException
+
+    load = dag.get_task("side_loads.load_fx_rates").python_callable
+    monkeypatch.setattr(fx_rates, "load", lambda: {"state": "SKIPPED", "reason": "No ecb_fx_api connection", "added": 0})
+    with pytest.raises(AirflowSkipException, match="No ecb_fx_api connection"):
+        load()
+    # With the connection it returns what it did, whether a rate was new or not
+    for result in ({"state": "LOADED", "added": 2}, {"state": "UP_TO_DATE", "added": 0}):
+        monkeypatch.setattr(fx_rates, "load", lambda result=result: result)
+        assert load() == result
+
+
+def test_each_brand_s_orders_are_captured_from_the_log_after_its_load_and_nothing_waits_for_it(dag):
+    loads = {f"ingest_{brand.key}.load_tables" for brand in brands_to_extract()}
+    for brand in brands_to_extract():
+        capture = dag.get_task(f"side_loads.capture_orders_cdc_{brand.key}")
+        # After that brand's load: every version the loader copied is then in the log the capture reads
+        assert capture.upstream_task_ids == {f"ingest_{brand.key}.load_tables"}
+        # A side load: when it fails, the run fails and the report is still built
+        assert capture.downstream_task_ids == set()
+    # The merges still wait for the loads and nothing else, and dbt for the reconciliation
+    first_merges = {f"streams_and_tasks.merge_{table.name}" for table in INCREMENTAL_TABLES if not table.merge_after}
+    for merge in first_merges:
+        assert dag.get_task(merge).upstream_task_ids == loads
+    assert dag.get_task("reconcile_bronze").upstream_task_ids.isdisjoint(
+        {task.task_id for task in dag.tasks if task.task_id.startswith("side_loads.")})
+    assert dag.get_task("dbt_build").upstream_task_ids == {"reconcile_bronze"}
+
+
+def test_without_its_connection_the_capture_is_skipped_and_a_lost_slot_fails_without_a_retry(dag, monkeypatch):
+    from airflow.sdk.exceptions import AirflowFailException, AirflowSkipException
+
+    capture = dag.get_task("side_loads.capture_orders_cdc_broomx").python_callable
+    calls = []
+
+    def skipped(brand, database):
+        calls.append((brand, database))
+        return {"state": "SKIPPED", "reason": "No crm_source_cdc connection", "changes": 0}
+
+    monkeypatch.setattr(cdc, "capture", skipped)
+    with pytest.raises(AirflowSkipException, match="No crm_source_cdc connection"):
+        capture("broomx", "crm_broomx")
+    assert calls == [("broomx", "crm_broomx")]
+    # With the connection it returns what it did, whether the log held a change or not
+    for result in ({"state": "CAPTURED", "changes": 12}, {"state": "UP_TO_DATE", "changes": 0}):
+        monkeypatch.setattr(cdc, "capture", lambda brand, database, result=result: result)
+        assert capture("broomx", "crm_broomx") == result
+
+    def lost(brand, database):
+        raise PermanentError("The replication slot cdc_crm_broomx was invalidated (wal_removed)")
+
+    # A slot that is gone stays gone: Airflow does not retry an AirflowFailException
+    monkeypatch.setattr(cdc, "capture", lost)
+    with pytest.raises(AirflowFailException, match="was invalidated"):
+        capture("broomx", "crm_broomx")
+
+
+def test_dbt_creates_the_side_loads_tables_before_anything_else(dag, monkeypatch):
+    # No side load is upstream of dbt_build: one that has never run must leave dbt an empty
+    # source table, not a missing one
+    calls = []
+    monkeypatch.setattr(dbt.raw_tables, "ensure_side_tables", lambda: calls.append("side tables"))
+    monkeypatch.setattr(dbt, "build", lambda *args, **kwargs: calls.append("freshness and build"))
+    monkeypatch.setattr(dbt, "get_current_context", lambda: {"ti": SimpleNamespace(try_number=1)})
+    monkeypatch.setattr(dbt, "airflow_environment", lambda: {})
+    dag.get_task("dbt_build").python_callable()
+    assert calls == ["side tables", "freshness and build"]
 
 
 def test_the_gate_decides_unless_the_run_says_otherwise(dag):

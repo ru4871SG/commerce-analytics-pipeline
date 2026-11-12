@@ -4,7 +4,6 @@ from datetime import datetime
 from types import SimpleNamespace
 from uuid import UUID
 
-import pandas as pd
 import pytest
 
 from crm_pipeline import bronze_loader

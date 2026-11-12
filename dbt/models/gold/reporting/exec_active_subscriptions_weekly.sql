@@ -68,12 +68,13 @@ daily as (
 
 )
 
+-- Each column is cast to its contract type (_reporting.yml)
 select
-    daily.brand,
-    brands.brand_name,
-    date_trunc(week, daily.date_day)       as week_start,
-    daily.date_day                         as snapshot_date,
-    daily.active_subscriptions
+    daily.brand::varchar                           as brand,
+    brands.brand_name::varchar                     as brand_name,
+    date_trunc(week, daily.date_day)::date         as week_start,
+    daily.date_day::date                           as snapshot_date,
+    daily.active_subscriptions::int                as active_subscriptions
 from daily
 inner join {{ ref('brands') }} as brands
     on daily.brand = brands.brand

@@ -22,6 +22,8 @@ EXPORT_API_CONN_ID = "crm_export_api"              # optional: refreshes a brand
 SNOWFLAKE_CONN_ID = "snowflake_default"            # used by the bronze loader and by dbt
 SLACK_CONN_ID = "slack_webhook"                    # optional: failure alerts
 SOURCE_WRITER_CONN_ID = "crm_source_writer"        # demo only: the activity simulator writes the CRM
+ECB_FX_CONN_ID = "ecb_fx_api"                      # ECB's daily exchange rates
+SOURCE_CDC_CONN_ID = "crm_source_cdc"              # a replication role on the CRM server
 
 # Demo mode: crm_daily_activity (Airflow) or the activity asset (Dagster) simulates a day of shop
 # activity every morning, and the report runs when it has finished. Without it, the report runs
@@ -33,6 +35,10 @@ TIMEZONE = "America/New_York"
 # Where bronze lives in Snowflake. dbt reads the same values (models/bronze/_sources.yml).
 BRONZE_DATABASE = os.environ.get("CRM_BRONZE_DATABASE", "RAW")
 BRONZE_SCHEMA = "CRM"
+# Reference data loaded beside the CRM by the side loads.
+REF_SCHEMA = "REF"
+# The ECB's rates up to the day the seed was written. The load asks the API for the days after it
+FX_RATES_SEED = DBT_PROJECT_DIR / "seeds" / "fx_rates_ecb.csv"
 # The database dbt builds silver and gold in, and the schema of the reporting tables (prod and
 # emulator targets; dbt/macros/generate_schema_name.sql)
 ANALYTICS_DATABASE = os.environ.get("CRM_ANALYTICS_DATABASE", "ANALYTICS")

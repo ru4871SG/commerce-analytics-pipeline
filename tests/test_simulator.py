@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 
 from crm_pipeline import simulator
+from crm_pipeline.config import Brand
 from crm_pipeline.errors import PermanentError
 from crm_pipeline.simulator import Budget, DayState, Subscription, Variant
 
@@ -168,3 +169,74 @@ def test_a_day_is_refused_when_the_previous_day_is_missing(monkeypatch):
     )
     with pytest.raises(RuntimeError, match="is not in the CRM"):
         simulator.simulate_day("broomx", "crm_broomx", simulator.FIRST_DAY + timedelta(days=1))
+
+
+BRANDS = [Brand("wecare", "WeCare", "crm_wecare", True), Brand("broomx", "Broomx", "crm_broomx", True)]
+
+
+def _record(monkeypatch, simulate=lambda key, day: {"orders": 2}, export=lambda key, day: {"lines": 10}):
+    calls = []
+
+    def simulate_day(key, database, day):
+        calls.append(("crm", key, database, day.isoformat()))
+        return simulate(key, day)
+
+    def export_day(brand, day):
+        calls.append(("web", brand.key, day.isoformat()))
+        return export(brand.key, day)
+
+    monkeypatch.setattr(simulator, "simulate_day", simulate_day)
+    monkeypatch.setattr(simulator.clickstream, "export_day", export_day)
+    return calls
+
+
+def test_a_range_writes_every_brands_day_oldest_first_then_that_days_clickstream_file(monkeypatch):
+    calls = _record(monkeypatch)
+    total = simulator.simulate_range(date(2026, 10, 1), date(2026, 10, 2), BRANDS)
+    # As one run of the DAG or the asset does for one day: the day in the CRM, then its file
+    assert calls == [
+        ("crm", "wecare", "crm_wecare", "2026-10-01"), ("web", "wecare", "2026-10-01"),
+        ("crm", "broomx", "crm_broomx", "2026-10-01"), ("web", "broomx", "2026-10-01"),
+        ("crm", "wecare", "crm_wecare", "2026-10-02"), ("web", "wecare", "2026-10-02"),
+        ("crm", "broomx", "crm_broomx", "2026-10-02"), ("web", "broomx", "2026-10-02"),
+    ]
+    assert total == {"orders": 8, "clickstream_lines": 40}
+
+
+def test_a_range_that_was_written_before_is_counted_and_left_as_it_is(monkeypatch):
+    _record(monkeypatch, simulate=lambda key, day: {"already_written": 1}, export=lambda key, day: {"written": False})
+    assert simulator.simulate_range(date(2026, 10, 1), date(2026, 10, 3), BRANDS) == {
+        "already_written": 6, "clickstream_lines": 0}
+    assert simulator.simulate_range(date(2026, 10, 2), date(2026, 10, 1), BRANDS) == {}       # no day in it
+
+
+def test_a_day_that_fails_stops_the_range_so_no_later_day_is_written_out_of_order(monkeypatch):
+    def simulate(key, day):
+        if day == date(2026, 10, 2):
+            raise RuntimeError("the database went away")
+        return {"orders": 1}
+
+    calls = _record(monkeypatch, simulate=simulate)
+    with pytest.raises(RuntimeError):
+        simulator.simulate_range(date(2026, 10, 1), date(2026, 10, 3), BRANDS)
+    assert [call[-1] for call in calls if call[0] == "crm"] == ["2026-10-01", "2026-10-01", "2026-10-02"]
+    assert ("web", "wecare", "2026-10-02") not in calls       # nor the failed day's clickstream file
+
+
+def test_the_command_writes_the_range_and_says_what_it_wrote(monkeypatch, capsys):
+    asked = []
+    monkeypatch.setattr(simulator, "simulate_range",
+                        lambda first, last: asked.append((first, last)) or {"orders": 1234, "new_customers": 7})
+    assert simulator.main(["--from", "2026-10-01", "--to", "2026-10-03"]) == 0
+    assert asked == [(date(2026, 10, 1), date(2026, 10, 3))]
+    assert capsys.readouterr().out == "Shop activity 2026-10-01..2026-10-03: 3 days, 7 new_customers, 1,234 orders\n"
+
+
+def test_the_command_refuses_a_day_that_is_not_over(monkeypatch, capsys):
+    """A day is written once: today's would stay partial for good, in the CRM and in the landing volume."""
+    monkeypatch.setattr(simulator, "simulate_range", lambda first, last: pytest.fail("nothing may be written"))
+    today = datetime.now(simulator.ZoneInfo(simulator.TIMEZONE)).date()
+    with pytest.raises(SystemExit) as stopped:
+        simulator.main(["--from", "2026-10-01", "--to", today.isoformat()])
+    assert stopped.value.code == 2
+    assert f"--to {today} is after yesterday" in capsys.readouterr().err
