@@ -4,10 +4,16 @@
 
 Subscription e-commerce analytics pipeline demo from the very beginning until dashboard. Using Postgres, Snowflake, dbt, Superset, and Delta lakehouse with Spark. Dagster is included as an alternative to Airflow.
 
-### See it without installing
+Check the end to end pipeline diagram:
+![The end-to-end pipeline](docs/pipeline.svg)
 
-- **What the pipeline built, as a page:** <https://ru4871sg.github.io/commerce-analytics-pipeline/> has a picture of the whole dashboard, the dbt docs with the lineage from the source tables to the dashboard, the pipeline diagram, and the row count of each reporting table. Every push to `main` builds it again from the fixed run of section 5.
-- **The pipeline itself, in a browser:** [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/ru4871SG/commerce-analytics-pipeline) opens this repository in a container that has Docker, Java and uv ([`.devcontainer/`](.devcontainer/devcontainer.json)) and installs every environment, which takes five to ten minutes. Then `scripts/local.sh fullrun --no-browser` runs the demo (15 to 20 minutes the first time), and the Ports panel has Superset, Airflow and the local Databricks workspace (section 4).
+## See it without installing
+
+**What the pipeline built, as a page:** <https://ru4871sg.github.io/commerce-analytics-pipeline/> has a picture of the whole dashboard, the dbt docs with the lineage from the source tables to the dashboard, the pipeline diagram, and the row count of each reporting table. Every push to `main` builds it again from the fixed run of section 5.
+
+**The pipeline itself, in GitHub CodeSpaces:** [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/ru4871SG/commerce-analytics-pipeline) - it will open this repository in a container that has Docker, Java and uv ([`.devcontainer/`](.devcontainer/devcontainer.json)) and installs every environment, which takes five to ten minutes. Then `scripts/local.sh fullrun --no-browser` runs the demo (15 to 20 minutes the first time), and the Ports panel has Superset, Airflow and the local Databricks workspace (section 4).
+
+## 0. Overview
 
 Three fictional subscription brands run their shops on CRM databases. This repo turns those
 databases into one executive report: revenue, contribution margin, new customers, active and
@@ -38,10 +44,7 @@ constant currency rate, where every GBP is converted at one fixed budget rate
 
 To show what the business earned in USD, it converts each order at the actual rate of its day, using the
 ECB's public API for the forex rate. The dashboard has both the constant chart and the chart with actual rates, and the gap between them is what the exchange rate did to revenue. The ECB quotes every currency against EUR, so the pipeline asks for two rates per day, USD per EUR and then GBP per EUR. It then
-divides the first by the second to get rate of USD per GBP. No amount is ever converted into EUR.
-
-Check the end to end pipeline diagram:
-![The end-to-end pipeline](docs/pipeline.svg)
+divides the first by the second to get rate of USD per GBP. It might sounds like one extra step instead of getting a direct GBP/USD quote, but ECB public API doesn't need API key, so it's convenient for a demo.
 
 The whole chain runs locally with fictional data: **PostgreSQL** in a container (with wal2json, for the
 change data capture), **fakesnow** as the Snowflake emulator, Airflow or Dagster and dbt in virtualenvs, and **Superset** with a SQLite
@@ -49,8 +52,6 @@ metadata database. No account outside the repo is required. Only one orchestrato
 
 It runs on your local machine with fictional data, and no real
 Snowflake, Databricks or CRM account is connected to this repository. If you plan to test on real systems, check section 7 in this README.
-
-Note: the exchange-rate load asks the ECB's public API, which needs no API key. To run without a network, comment out `AIRFLOW_CONN_ECB_FX_API` in `.env`: the step then skips, and the report uses the rates in [`dbt/seeds/fx_rates_ecb.csv`](dbt/seeds/fx_rates_ecb.csv).
 
 Every pull request runs this whole pipeline in CI, on the same emulators and under both orchestrators (section 5). The lakehouse workflow runs its checks on pull requests, and skips its `release` and `deploy` jobs until the repository variable `DATABRICKS_HOST` is configured.
 
@@ -353,13 +354,15 @@ scripts/local.sh fullrun
 
 If for whatever reason fullrun doesn't work due to previous instance of your databricks workspace or fakesnow, just kill all processes of databricks workspace `pkill -9 -f databricks_workspace.py`, as well as fakesnow `pkill -9 -f fakesnow`, and re-run `scripts/local.sh fullrun`.
 
-## 5. Continuous integration
+## 5. Continuous integration (CI)
 
 Because the whole pipeline runs without an account, CI runs the pipeline itself: [`.github/workflows/pipeline.yml`](.github/workflows/pipeline.yml) runs on every pull request and every push to `main`. Its **lint** job runs `scripts/local.sh lint` (shellcheck, actionlint, ruff, and sqlfluff with the rules in [`dbt/.sqlfluff`](dbt/.sqlfluff)), and its **pipeline** job runs `install`, `test`, a fixed scenario and `dashboard check`. The scenario (`scripts/local.sh ci-scenario --reset`) gives the same numbers on any day.
 
 The scenario needs nothing outside the runner: it skips the exchange-rate load and uses the rates in the repo, while the change data capture stays on against the runner's own PostgreSQL. A push to `main` uploads its gold fingerprint, and a pull request compares its own against it and writes the difference into the job summary ([`local/gold_diff.py`](local/gold_diff.py)).
 
 When the repository variable `PUBLISH_SITE` is `true`, a push to `main` also builds the site with `scripts/local.sh site`, and a third job, **pages**, deploys it to GitHub Pages.
+
+The page's scenario stops at 3 October by design, due to the configuration `CI_SCENARIO_END="2026-10-03"` at [`scripts/local.sh`](scripts/local.sh). The seed itself ends at 30 September, then three simulated days, which explains the 3 October configuration. It is fixed by design. When you run with `fullrun` command, however, it doesn't set that limit, it simulates up to yesterday in New York time.
 
 ## 6. Testing
 
